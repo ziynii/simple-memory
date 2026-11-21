@@ -1,7 +1,7 @@
 (() => {
   'use strict';
-  if (window.__ZGM_V51__) return;
-  window.__ZGM_V51__ = true;
+  if (window.__ZGM_V52__) return;
+  window.__ZGM_V52__ = true;
   window.__ZGM_REMOTE_CORE_LOADED__ = true;
   window.__ZGM_REMOTE_CORE_VERSION__ = '5.1';
 
@@ -11,7 +11,7 @@
   const gptSite = /(^|\.)chatgpt\.com$/.test(host) && window === window.top;
   if (!parentSite && !frameSite && !gptSite) return;
 
-  const CHANNEL = 'zgm.v51.bridge';
+  const CHANNEL = 'zgm.v52.bridge';
   const HANDOFF_HASH = 'zgmjob';
   const HANDOFF_NAME_PREFIX = '__ZGM_JOB_ID_V2__:';
   const STORAGE_REQUEST_EVENT = '__ZGM_GM_REQUEST_V1__';
@@ -111,14 +111,14 @@
   };
 
   function toast(message) {
-    document.getElementById('zgm51-toast')?.remove();
+    document.getElementById('zgm52-toast')?.remove();
     const el = create(
       'div',
       document.body,
       message,
       'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#27272a;color:#fff;border-radius:12px;padding:12px 16px;max-width:90vw;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0005'
     );
-    el.id = 'zgm51-toast';
+    el.id = 'zgm52-toast';
     setTimeout(() => el.remove(), 4400);
   }
 
@@ -146,17 +146,17 @@
   }
 
   const css = `
-    #zgm51-trigger,#zgm51-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
-    #zgm51-overlay *{box-sizing:border-box}
-    #zgm51-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
-    #zgm51-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
-    #zgm51-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
-    #zgm51-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
-    #zgm51-overlay button.primary{background:#292929;color:white;border-color:#292929}
-    #zgm51-overlay button:disabled{opacity:.42;cursor:default}
-    #zgm51-overlay input,#zgm51-overlay select,#zgm51-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
-    #zgm51-overlay label{display:block;font-weight:700;margin:12px 0 6px}
-    #zgm51-overlay textarea{resize:vertical}
+    #zgm52-trigger,#zgm52-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
+    #zgm52-overlay *{box-sizing:border-box}
+    #zgm52-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
+    #zgm52-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
+    #zgm52-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
+    #zgm52-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
+    #zgm52-overlay button.primary{background:#292929;color:white;border-color:#292929}
+    #zgm52-overlay button:disabled{opacity:.42;cursor:default}
+    #zgm52-overlay input,#zgm52-overlay select,#zgm52-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
+    #zgm52-overlay label{display:block;font-weight:700;margin:12px 0 6px}
+    #zgm52-overlay textarea{resize:vertical}
   `;
   create('style', document.head || document.documentElement, css);
 
@@ -330,6 +330,23 @@
     }
 
     function findPrompt() {
+      // 2026 ChatGPT Composer DOM: 실제 입력창을 가장 먼저 직접 찾는다.
+      // 예: <div data-composer-input> ... <div class="ProseMirror" contenteditable="true" role="textbox" data-composer-markdown>
+      const directSelectors = [
+        '[data-composer-input] .ProseMirror[contenteditable="true"][role="textbox"]',
+        '[data-composer-input-layout] .ProseMirror[contenteditable="true"][role="textbox"]',
+        '[data-rich-text-layout] > .ProseMirror[contenteditable="true"][role="textbox"]',
+        '.ProseMirror[contenteditable="true"][role="textbox"][data-composer-markdown]',
+        '.ProseMirror[contenteditable="true"][role="textbox"][aria-multiline="true"]'
+      ];
+
+      for (const selector of directSelectors) {
+        try {
+          const el = document.querySelector(selector);
+          if (el?.isConnected && el.getAttribute('contenteditable') !== 'false') return el;
+        } catch {}
+      }
+
       const selectors = [
         '#prompt-textarea',
         '[data-testid="prompt-textarea"]',
@@ -353,6 +370,13 @@
           });
         } catch {}
       }
+
+      // 일반 fallback에서는 기존 점수화를 쓰되, Composer 내부 요소는 과도한 ancestor 필터 없이 우선한다.
+      const composerCandidate = candidates.find(el =>
+        el.closest?.('[data-composer-input], [data-composer-input-layout], [data-rich-text-layout]')
+      );
+      if (composerCandidate) return composerCandidate;
+
       candidates.sort((a, b) => scorePrompt(b) - scorePrompt(a));
       return candidates.find(el => Number.isFinite(scorePrompt(el))) || null;
     }
@@ -389,7 +413,7 @@
         if (selection) {
           const range = document.createRange();
           range.selectNodeContents(el);
-          range.collapse(false);
+          // ChatGPT ProseMirror의 빈 placeholder 문단까지 교체하도록 전체 내용을 선택한다.
           selection.removeAllRanges();
           selection.addRange(range);
         }
@@ -438,7 +462,7 @@
           if (name.startsWith(HANDOFF_NAME_PREFIX)) id = name.slice(HANDOFF_NAME_PREFIX.length);
         } catch {}
       }
-      // Loader v1.2가 document-start에서 hash의 작업 ID를 먼저 보존한다.
+      // Loader가 document-start에서 hash의 작업 ID를 먼저 보존한다.
       if (!id) {
         try { id = sessionStorage.getItem(EARLY_JOB_SESSION_KEY) || ''; } catch {}
       }
@@ -728,11 +752,11 @@
     }
 
     function newDialog() {
-      document.getElementById('zgm51-overlay')?.remove();
+      document.getElementById('zgm52-overlay')?.remove();
       const overlay = create('div', document.body);
-      overlay.id = 'zgm51-overlay';
+      overlay.id = 'zgm52-overlay';
       const dialog = create('div', overlay);
-      dialog.id = 'zgm51-dialog';
+      dialog.id = 'zgm52-dialog';
       overlay.onclick = event => { if (event.target === overlay) overlay.remove(); };
 
       const head = create('div', dialog, null, 'display:flex;justify-content:space-between;align-items:center;gap:8px');
@@ -910,12 +934,12 @@
       }
 
       label(body, '옵션 1 · 사용 용도');
-      radio(body, '나레이션 덮어씌우기 용도', 'zgm51-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
-      radio(body, '유저 프로필에 넣는 용도', 'zgm51-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
+      radio(body, '나레이션 덮어씌우기 용도', 'zgm52-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
+      radio(body, '유저 프로필에 넣는 용도', 'zgm52-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
 
       label(body, '옵션 2 · 정리 범위');
-      radio(body, '이전 서사와 함께 정리', 'zgm51-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
-      radio(body, '복사한 내용만 정리', 'zgm51-scope', 'only', scope === 'only', value => { scope = value; });
+      radio(body, '이전 서사와 함께 정리', 'zgm52-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
+      radio(body, '복사한 내용만 정리', 'zgm52-scope', 'only', scope === 'only', value => { scope = value; });
 
       const confirmRow = buttons(body);
       const confirmButton = btn(confirmRow, '확인', () => {
@@ -1023,9 +1047,9 @@
     }
 
     function mount() {
-      if (document.getElementById('zgm51-trigger')) return;
+      if (document.getElementById('zgm52-trigger')) return;
       const button = create('button', document.body, '서사 정리');
-      button.id = 'zgm51-trigger';
+      button.id = 'zgm52-trigger';
       button.type = 'button';
       button.onclick = () => show('main');
     }
