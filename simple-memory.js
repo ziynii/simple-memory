@@ -1,7 +1,7 @@
 (() => {
   'use strict';
-  if (window.__ZGM_V45__) return;
-  window.__ZGM_V45__ = true;
+  if (window.__ZGM_V46__) return;
+  window.__ZGM_V46__ = true;
   const host = location.hostname;
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
   const frameSite = host === 'frame.pingpong.ai';
@@ -9,12 +9,26 @@
   if (!parentSite && !frameSite && !gptSite) return;
 
   const CHANNEL = 'zgm.v41.bridge';
-  const HANDOFF = 'zgm.v45.gpt.handoff';
+  const HANDOFF_HASH = 'zgmjob';
   const BASE = 'zgm-independent-v4-'; // 기존 방 목록 키 유지
   const ROOM_KEY = BASE+'rooms', PENDING_KEY = BASE+'pending';
   const MAX_MESSAGES = 40, MAX_AGE = 15*60*1000;
   const clean = s => String(s ?? '').replace(/\u200b/g, '').trim();
   const sleep = ms => new Promise(r=>setTimeout(r,ms));
+  function encodeTransfer(value) {
+    const bytes = new TextEncoder().encode(JSON.stringify(value));
+    let binary = '';
+    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+    return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');
+  }
+  function decodeTransfer(value) {
+    try {
+      const base64=String(value||'').replace(/-/g,'+').replace(/_/g,'/');
+      const binary=atob(base64+'='.repeat((4-base64.length%4)%4));
+      const bytes=Uint8Array.from(binary,ch=>ch.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    } catch { return null; }
+  }
   // External Netlify JS runs in page context: GM_* APIs are unavailable.
   // Store room settings in the Zeta page's localStorage.
   const db = {
@@ -61,74 +75,180 @@
 
   // iframe: rendered message DOM only, and only during explicit selection.
   if(frameSite) {
-    let picking=false, entries=[], first=null, bar=null;
+    let picking=false, entries=[], first=null, bar=null, pointerStart=null, lastPointerHandled=0;
     const log=()=>document.querySelector('[role="log"][aria-label="Chat messages"]')||document.querySelector('[role="log"]');
-    function getEntries() {
-      const root=log();if(!root)return [];
-      const rows=[...root.querySelectorAll('div.flex.flex-row.items-start.py-2')].filter(r=>
-        (r.classList.contains('ml-auto')||r.classList.contains('pr-[72px]')) &&
-        (r.classList.contains('pl-2')||r.classList.contains('pl-[72px]')));
-      const arr=[];
-      for(const row of rows){
-        const user=row.classList.contains('ml-auto')||row.classList.contains('pl-[72px]');
-        const bubble=row.querySelector(user?'div.rounded-l-xl.rounded-br-xl':'div.rounded-r-xl.rounded-bl-xl');
-        if(!bubble)continue;
-        const clone=bubble.cloneNode(true);
-        clone.querySelectorAll('button,svg,script,style,select,textarea,input,[aria-hidden="true"],.message-context-menu-trigger').forEach(e=>e.remove());
-        const text=clean(clone.innerText||clone.textContent).replace(/\n{3,}/g,'\n\n');
-        if(text && text.length<=24000){
-          // Keep an isolated rendered name node when the DOM provides one.
-          const firstLeaf=[...clone.querySelectorAll('*')].find(el=>
-            el.children.length===0 && /^[가-힣A-Za-z][가-힣A-Za-z0-9 _.-]{0,19}$/.test(clean(el.textContent)) &&
-            text.startsWith(clean(el.textContent)) && text.length>clean(el.textContent).length
-          );
-          const speaker=firstLeaf?clean(firstLeaf.textContent):'';
-          arr.push({row,bubble,role:user?'user':'character',text,speaker});
-        }
+
+    function isBubbleShape(el){
+      if(!(el instanceof Element))return false;
+      const c=el.classList;
+      const userShape=c.contains('rounded-l-xl')&&c.contains('rounded-br-xl');
+      const charShape=c.contains('rounded-r-xl')&&c.contains('rounded-bl-xl');
+      const aligned=(c.contains('self-end')||c.contains('self-start')) &&
+        (c.contains('w-fit')||c.contains('px-3')||c.contains('py-2'));
+      return userShape||charShape||aligned;
+    }
+    function roleForBubble(el){
+      const c=el.classList;
+      if(c.contains('self-end')||c.contains('rounded-l-xl'))return 'user';
+      if(c.contains('self-start')||c.contains('rounded-r-xl'))return 'character';
+      const row=el.closest('div.flex.flex-row.items-start');
+      if(row?.classList.contains('ml-auto')||row?.classList.contains('pl-[72px]'))return 'user';
+      return 'character';
+    }
+    function rowForBubble(el,root){
+      let row=el.parentElement;
+      while(row&&row!==root){
+        if(row.classList?.contains('flex-row')&&row.classList?.contains('items-start'))return row;
+        row=row.parentElement;
       }
-      // DOM may be newest-first for flex-col-reverse; keep a stable chronological order.
-      const stack = root.closest('.flex-col-reverse');
+      return el.parentElement||el;
+    }
+    function textFromBubble(bubble){
+      const clone=bubble.cloneNode(true);
+      clone.querySelectorAll('button,svg,script,style,select,textarea,input,[aria-hidden="true"]').forEach(e=>e.remove());
+      return clean(clone.innerText||clone.textContent).replace(/\n{3,}/g,'\n\n');
+    }
+    function speakerFromBubble(bubble,text){
+      const clone=bubble.cloneNode(true);
+      clone.querySelectorAll('button,svg,script,style,select,textarea,input,[aria-hidden="true"]').forEach(e=>e.remove());
+      const leaf=[...clone.querySelectorAll('*')].find(el=>{
+        const value=clean(el.textContent);
+        return el.children.length===0 &&
+          /^[가-힣A-Za-z][가-힣A-Za-z0-9 _.-]{0,19}$/.test(value) &&
+          text.startsWith(value) && text.length>value.length;
+      });
+      return leaf?clean(leaf.textContent):'';
+    }
+    function getEntries(){
+      const root=log();if(!root)return [];
+      const all=[...root.querySelectorAll('div')];
+      const strong=all.filter(el=>{
+        const c=el.classList;
+        return (c.contains('rounded-l-xl')&&c.contains('rounded-br-xl')) ||
+          (c.contains('rounded-r-xl')&&c.contains('rounded-bl-xl'));
+      });
+      const weak=all.filter(el=>isBubbleShape(el) && !strong.some(s=>s===el||s.contains(el)||el.contains(s)));
+      const bubbles=[...strong,...weak];
+      const seen=new Set(), arr=[];
+      for(const bubble of bubbles){
+        if(seen.has(bubble))continue;
+        const role=roleForBubble(bubble);
+        const row=rowForBubble(bubble,root);
+        const text=textFromBubble(bubble);
+        if(!text||text.length>24000)continue;
+        seen.add(bubble);
+        arr.push({row,bubble,role,text,speaker:speakerFromBubble(bubble,text)});
+      }
+      // Keep DOM order, then compensate only when the scroll stack itself is flex-col-reverse.
+      arr.sort((a,b)=>{
+        if(a.bubble===b.bubble)return 0;
+        const pos=a.bubble.compareDocumentPosition(b.bubble);
+        return pos&Node.DOCUMENT_POSITION_FOLLOWING?-1:1;
+      });
+      const stack=root.parentElement?.closest?.('.flex-col-reverse')||root.closest?.('.flex-col-reverse');
       if(stack)arr.reverse();
       return arr;
     }
+    function entryIndexFromEvent(event,current){
+      const path=typeof event.composedPath==='function'?event.composedPath():[];
+      const candidates=[...path,event.target].filter(x=>x instanceof Element);
+      return current.findIndex(({row,bubble})=>candidates.some(x=>
+        x===bubble||bubble.contains(x)||x===row||row.contains(x)
+      ));
+    }
+    function findFirstIndex(current){
+      if(!first)return -1;
+      let i=current.findIndex(e=>e.bubble===first.bubble);
+      if(i>=0)return i;
+      const matches=[];
+      current.forEach((e,index)=>{if(e.role===first.role&&e.text===first.text)matches.push(index);});
+      return matches.length?matches[0]:-1;
+    }
     const clearMarks=()=>document.querySelectorAll('[data-zgm41-mark]').forEach(e=>e.removeAttribute('data-zgm41-mark'));
-    function mark(a,b){clearMarks();const lo=Math.min(a,b),hi=Math.max(a,b);entries.slice(lo,hi+1).forEach((e,i)=>e.bubble.setAttribute('data-zgm41-mark',i===0?'start':i===hi-lo?'end':'between'));}
+    function mark(list,a,b){
+      clearMarks();
+      const lo=Math.min(a,b),hi=Math.max(a,b);
+      list.slice(lo,hi+1).forEach((e,i)=>e.bubble.setAttribute('data-zgm41-mark',i===0?'start':i===hi-lo?'end':'between'));
+    }
     const send=(kind,more={})=>{
-      // Only post to a verified Zeta parent, never to an arbitrary embedding site.
       let origin='https://zeta-ai.io';
       try { if(document.referrer) origin=new URL(document.referrer).origin; } catch {}
       if(!/^https:\/\/(?:[^/]+\.)?zeta-ai\.io$/.test(origin))return;
       window.parent.postMessage({channel:CHANNEL,kind,...more},origin);
     };
     function cancelSelection(notify=true){
-      document.removeEventListener('click',onClick,true);picking=false;first=null;
+      document.removeEventListener('pointerdown',onPointerDown,true);
+      document.removeEventListener('pointerup',onPointerUp,true);
+      document.removeEventListener('click',onClick,true);
+      picking=false;first=null;pointerStart=null;
       bar?.remove();bar=null;
       if(notify){clearMarks();send('cancel');}
     }
-    function onClick(e){
-      if(!picking)return;
-      // Resolve actual rendered bubble first: theme wrappers, nested spans and
-      // shadow retargeting should not prevent selecting a displayed message.
-      const path=typeof e.composedPath==='function'?e.composedPath():[];
-      const candidates=[...path,e.target].filter(x=>x instanceof Element);
-      const index=entries.findIndex(({row,bubble})=>candidates.some(x=>
-        x===bubble || bubble.contains(x) || x===row || (row.contains(x) && x.closest?.('div.flex.flex-row.items-start.py-2')===row)
-      ));
-      if(index<0)return;
-      e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();
-      if(first==null){first=index;mark(index,index);bar.querySelector('[data-status]').textContent='끝 말풍선을 선택해 줘';return;}
-      const lo=Math.min(first,index),hi=Math.max(first,index),slice=entries.slice(lo,hi+1);
-      if(slice.length>MAX_MESSAGES){bar.querySelector('[data-status]').textContent=`${slice.length}개 메시지 — 최대 40개(20턴)까지`;return;}
-      mark(lo,hi);
+    function handleTap(e){
+      if(!picking)return false;
+      const current=getEntries();
+      const index=entryIndexFromEvent(e,current);
+      if(index<0)return false;
+      e.preventDefault?.();e.stopPropagation?.();e.stopImmediatePropagation?.();
+
+      if(first==null){
+        const picked=current[index];
+        first={bubble:picked.bubble,role:picked.role,text:picked.text};
+        entries=current;mark(current,index,index);
+        const status=bar?.querySelector('[data-status]');
+        if(status)status.textContent='끝 말풍선을 선택해 줘';
+        return true;
+      }
+
+      const firstIndex=findFirstIndex(current);
+      if(firstIndex<0){
+        const status=bar?.querySelector('[data-status]');
+        if(status)status.textContent='시작 말풍선이 현재 화면에서 벗어났어. 시작 지점이 보이게 한 뒤 다시 선택해 줘.';
+        clearMarks();first=null;
+        return true;
+      }
+
+      const lo=Math.min(firstIndex,index),hi=Math.max(firstIndex,index),slice=current.slice(lo,hi+1);
+      if(slice.length>MAX_MESSAGES){
+        const status=bar?.querySelector('[data-status]');
+        if(status)status.textContent=`약 ${Math.ceil(slice.length/2)}턴 · 최대 20턴까지 선택할 수 있어`;
+        return true;
+      }
+      entries=current;mark(current,lo,hi);
       cancelSelection(false);
-      send('selected',{messages:slice.map(m=>({role:m.role,text:m.text,speaker:m.speaker})),count:Math.ceil(slice.length/2)});
+      send('selected',{
+        messages:slice.map(m=>({role:m.role,text:m.text,speaker:m.speaker})),
+        count:Math.ceil(slice.length/2)
+      });
+      return true;
+    }
+    function onPointerDown(e){
+      if(!picking||e.isPrimary===false)return;
+      pointerStart={x:e.clientX,y:e.clientY,id:e.pointerId};
+    }
+    function onPointerUp(e){
+      if(!picking||e.isPrimary===false||!pointerStart)return;
+      const dx=e.clientX-pointerStart.x,dy=e.clientY-pointerStart.y;
+      const moved=Math.hypot(dx,dy);
+      pointerStart=null;
+      if(moved>12)return; // scrolling/dragging: do not treat it as a selection tap.
+      if(handleTap(e))lastPointerHandled=Date.now();
+    }
+    function onClick(e){
+      if(Date.now()-lastPointerHandled<450)return;
+      handleTap(e);
     }
     function begin(){
       cancelSelection(false);clearMarks();entries=getEntries();first=null;
-      if(!entries.length){send('error',{message:'iframe은 연결됐지만 현재 화면의 말풍선 DOM을 찾지 못했어. 채팅 화면을 열고 확인해 줘.'});return;}
+      if(!entries.length){
+        send('error',{message:'iframe은 연결됐지만 현재 화면의 말풍선 DOM을 찾지 못했어. 채팅 화면을 조금 움직인 뒤 다시 시도해 줘.'});
+        return;
+      }
       picking=true;bar=create('div',document.body);bar.id='zgm41-pickbar';
-      const status=create('span',bar,'시작 말풍선을 선택해 줘');status.dataset.status='1';
+      const status=create('span',bar,`시작 말풍선을 선택해 줘 · 현재 인식 ${entries.length}개`);status.dataset.status='1';
       const btn=create('button',bar,'선택 취소');btn.onclick=()=>cancelSelection(true);
+      document.addEventListener('pointerdown',onPointerDown,true);
+      document.addEventListener('pointerup',onPointerUp,true);
       document.addEventListener('click',onClick,true);
       send('ready',{available:entries.length});
     }
@@ -138,86 +258,132 @@
       if(e.data.kind==='begin')begin();
       if(e.data.kind==='clear'){cancelSelection(false);clearMarks();}
     });
-    // Explicit handshake only. No polling, DOM observer, or request to Zeta APIs.
     send('frame-ready');
   }
 
-     if(gptSite){
-     // No fetch/API calls and no auto-send. The receiving page only accepts
-     // a message from its exact Zeta opener, with a strict sender origin.
-     let pending=null, filling=false;
-     const allowedOrigin = origin => /^https:\/\/(?:[^/]+\.)?zeta-ai\.io$/.test(origin);
-     function inputElement(){
-       return document.querySelector('#prompt-textarea[contenteditable="true"]') ||
-         document.querySelector('[data-testid="composer-input"] [contenteditable="true"]') ||
-         document.querySelector('[contenteditable="true"][data-lexical-editor]') ||
-         document.querySelector('textarea#prompt-textarea');
-     }
-     function fillText(text){
-       const el=inputElement();
-       if(!el || !el.isConnected || el.getAttribute('contenteditable')==='false') return false;
-       el.focus();
-       if(el instanceof HTMLTextAreaElement){
-         const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')?.set;
-         if(setter)setter.call(el,text); else el.value=text;
-         el.dispatchEvent(new Event('input',{bubbles:true}));
-         return el.value===text;
-       }
-       // The editor may be ProseMirror; use an editable action so the editor
-       // receives normal input events rather than only altering visual HTML.
-       try {
-         const selection=window.getSelection();
-         const range=document.createRange();range.selectNodeContents(el);
-         selection.removeAllRanges();selection.addRange(range);
-         if(document.execCommand('insertText',false,text))return true;
-       } catch {}
-       try {
-         el.replaceChildren(document.createTextNode(text));
-         el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));
-         return el.textContent===text;
-       }catch{return false;}
-     }
-     function attemptFill(){
-       if(!pending || filling)return;
-       filling=true;
-       const deadline=Date.now()+12000;
-       const loop=()=>{
-         if(!pending){filling=false;return;}
-         if(fillText(pending.text)){
-           const msg=pending;pending=null;filling=false;
-           toast('GPT 입력창에 내용을 채웠어. 확인 후 직접 전송해 줘.');
-           return;
-         }
-         if(Date.now()>deadline){
-           pending=null;filling=false;
-           toast('자동 입력을 완료하지 못했어. 제타에서 복사한 내용을 붙여넣어 줘.');
-           return;
-         }
-         setTimeout(loop,350);
-       };
-       loop();
-     }
-     window.addEventListener('message',e=>{
-       if(e.source!==window.opener || !allowedOrigin(e.origin))return;
-       if(e.data?.channel!==HANDOFF || e.data.kind!=='fill')return;
-       const value=e.data.text;
-       if(typeof value!=='string'||!value||value.length>300000)return;
-       pending={text:value};
-       try{window.opener.postMessage({channel:HANDOFF,kind:'received',nonce:e.data.nonce},e.origin);}catch{}
-       attemptFill();
-     });
-     // A readiness ping contains no chat text. Repeated only for the first
-     // few seconds after this GPT tab loads, never during Zeta chat use.
-     if(window.opener){
-       let tries=0;
-       const ready=()=>{
-         if(!window.opener || tries++>=24)return;
-         try{window.opener.postMessage({channel:HANDOFF,kind:'ready'},'*');}catch{return;}
-         setTimeout(ready,500);
-       };
-       ready();
-     }
-   }
+  if(gptSite){
+    function visible(el){
+      if(!el?.isConnected||el.disabled||el.getAttribute?.('aria-disabled')==='true'||el.getAttribute?.('contenteditable')==='false')return false;
+      try{
+        const s=getComputedStyle(el),r=el.getBoundingClientRect();
+        if(s.display==='none'||s.visibility==='hidden'||Number.parseFloat(s.opacity||'1')===0)return false;
+        if(r.width<2&&r.height<2)return false;
+      }catch{}
+      return true;
+    }
+    function scorePrompt(el){
+      if(!visible(el))return -Infinity;
+      if(el.closest?.('[data-writing-block="true"],[data-message-author-role],[data-turn]'))return -Infinity;
+      let s=0;
+      if(el.id==='prompt-textarea')s+=120;
+      const tid=el.getAttribute?.('data-testid')||'';
+      if(tid==='prompt-textarea')s+=115;
+      if(/composer.*(?:input|text)|(?:input|text).*composer/i.test(tid))s+=100;
+      if(el.matches?.('.ProseMirror[contenteditable="true"]'))s+=90;
+      if(el.matches?.('[contenteditable="true"][role="textbox"]'))s+=85;
+      if(el.matches?.('textarea[name="prompt-textarea"]'))s+=80;
+      if(el.matches?.('textarea'))s+=35;
+      if(el.closest?.('form'))s+=20;
+      return s;
+    }
+    function findPrompt(){
+      const selectors=[
+        '#prompt-textarea',
+        '[data-testid="prompt-textarea"]',
+        '[data-testid="composer-input"][contenteditable="true"]',
+        '[data-testid="composer-text-input"][contenteditable="true"]',
+        '.ProseMirror[contenteditable="true"][role="textbox"]',
+        '.ProseMirror[contenteditable="true"]',
+        '[contenteditable="true"][role="textbox"]',
+        '[contenteditable="plaintext-only"][role="textbox"]',
+        'textarea[name="prompt-textarea"]'
+      ];
+      const seen=new Set(),all=[];
+      for(const selector of selectors){
+        try{
+          document.querySelectorAll(selector).forEach(el=>{if(!seen.has(el)){seen.add(el);all.push(el);}});
+        }catch{}
+      }
+      all.sort((a,b)=>scorePrompt(b)-scorePrompt(a));
+      return all.find(el=>Number.isFinite(scorePrompt(el)))||null;
+    }
+    function editableText(el){
+      if(!el)return '';
+      if('value' in el&&typeof el.value==='string')return el.value;
+      return el.innerText||el.textContent||'';
+    }
+    function dispatchInput(el,text){
+      try{el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));}
+      catch{el.dispatchEvent(new Event('input',{bubbles:true}));}
+    }
+    async function insertPrompt(el,text){
+      el.focus();
+      if('value' in el&&typeof el.value==='string'){
+        const proto=Object.getPrototypeOf(el);
+        const setter=Object.getOwnPropertyDescriptor(proto,'value')?.set;
+        if(setter)setter.call(el,text);else el.value=text;
+        dispatchInput(el,text);
+        el.dispatchEvent(new Event('change',{bubbles:true}));
+        await sleep(100);
+        return editableText(el).trim().length>0;
+      }
+      try{
+        const sel=window.getSelection?.();
+        if(sel){
+          const range=document.createRange();
+          range.selectNodeContents(el);range.collapse(false);
+          sel.removeAllRanges();sel.addRange(range);
+        }
+        if(document.execCommand('insertText',false,text)){
+          dispatchInput(el,text);await sleep(120);
+          if(editableText(el).trim())return true;
+        }
+      }catch{}
+      try{
+        el.replaceChildren();
+        String(text).split('\n').forEach(line=>{
+          const p=document.createElement('p');
+          if(line)p.textContent=line;else p.append(document.createElement('br'));
+          el.append(p);
+        });
+        const sel=window.getSelection?.();
+        if(sel&&el.lastChild){
+          const range=document.createRange();
+          range.selectNodeContents(el.lastChild);range.collapse(false);
+          sel.removeAllRanges();sel.addRange(range);
+        }
+        dispatchInput(el,text);
+        await sleep(150);
+        return editableText(el).trim().length>0;
+      }catch{return false;}
+    }
+    async function consumeHandoff(){
+      const hash=String(location.hash||'').replace(/^#/,'');
+      if(!hash)return;
+      let raw='';
+      try{raw=new URLSearchParams(hash).get(HANDOFF_HASH)||'';}catch{}
+      if(!raw)return;
+      const job=decodeTransfer(raw);
+      // Remove the conversation text from the address bar/history as soon as it is read.
+      try{history.replaceState(history.state,'',location.pathname+location.search);}catch{}
+      if(!job||job.v!==1||typeof job.text!=='string'||!job.text||job.text.length>300000)return;
+      if(!Number.isFinite(job.at)||Date.now()-job.at>MAX_AGE)return;
+      const deadline=Date.now()+30000;
+      let prompt=null;
+      while(Date.now()<deadline){
+        prompt=findPrompt();
+        if(prompt)break;
+        await sleep(200);
+      }
+      if(!prompt){toast('GPT 입력창을 찾지 못했어. 복사된 내용을 직접 붙여넣어 줘.');return;}
+      const ok=await insertPrompt(prompt,job.text);
+      if(ok){
+        prompt.focus();
+        toast('GPT 입력창에 자동으로 채웠어. 확인한 뒤 전송은 직접 눌러 줘.');
+      }else toast('자동 입력에 실패했어. 복사된 내용을 직접 붙여넣어 줘.');
+    }
+    consumeHandoff();
+  }
 
 if(parentSite){
     let selected=null,activeTab='main',purpose='narrator',scope='withHistory',roomId='';
@@ -282,29 +448,24 @@ if(parentSite){
 ${body}`;
       }).join('\n\n');
     }
-    // Open ChatGPT in a new tab while retaining a browser-standard postMessage
-    // channel. If the destination uses COOP or Safari cuts window.opener, the
-    // clipboard remains a manual fallback; we never claim the transfer worked.
-    function openGPT(url, payload) {
-      const popup = window.open('about:blank', '_blank');
-      if (!popup) return false;
-      const nonce = (crypto.randomUUID?.() || `${Date.now()}_${Math.random()}`);
-      let done = false;
-      const onMessage = e => {
-        if (done || e.source !== popup || e.origin !== 'https://chatgpt.com') return;
-        if (e.data?.channel !== HANDOFF) return;
-        if (e.data.kind === 'ready') {
-          try { popup.postMessage({channel:HANDOFF,kind:'fill',nonce,text:payload},'https://chatgpt.com'); } catch {}
-        }
-        if (e.data.kind === 'received' && e.data.nonce === nonce) {
-          done = true;
-          window.removeEventListener('message',onMessage);
-        }
-      };
-      window.addEventListener('message',onMessage);
-      setTimeout(() => { window.removeEventListener('message',onMessage); }, 20000);
-      try { popup.location.replace(url); }
-      catch { window.removeEventListener('message',onMessage); try{popup.close();}catch{} return false; }
+    // Cross-site handoff uses the URL fragment, which is not sent as an HTTP request.
+    // ChatGPT consumes it once, removes it from the address bar, and only fills the composer.
+    function openGPT(url,payload){
+      let target='';
+      try{
+        const u=new URL(url);
+        u.searchParams.set('no_universal_links','1');
+        u.hash=`${HANDOFF_HASH}=${encodeTransfer({v:1,text:payload,at:Date.now()})}`;
+        target=u.toString();
+      }catch{return false;}
+      const mobile=/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+      if(mobile){
+        location.assign(target);
+        return true;
+      }
+      const popup=window.open(target,'_blank');
+      if(!popup)return false;
+      try{popup.opener=null;}catch{}
       return true;
     }
     function promptText(){
@@ -395,22 +556,31 @@ ${body}`;
         try{await navigator.clipboard.writeText(promptText());toast('대화와 프롬프트를 복사했어.');}
         catch{toast('클립보드 권한 때문에 복사에 실패했어.');}
       },true);copy.disabled=!selected;
-             const go=btn(bottom,'GPT로 가져가기',async()=>{
-         const target=list.find(r=>r.id===select.value);
-         if(!target){toast('GPT 채팅방을 먼저 선택해 줘.');return;}
-         if(!selected?.length){toast('구간을 먼저 선택해 줘.');return;}
-         const payload=promptText();
-         // Open synchronously within the click to avoid popup blockers.
-         const opened=openGPT(target.url,payload);
-         // Clipboard is a fallback; a failed copy must not block the handoff.
-         try { await navigator.clipboard.writeText(payload); } catch {}
-         if(!opened){
-           toast('새 탭 열기가 차단됐어. 팝업 허용 후 다시 눌러 줘.');
-           return;
-         }
-         toast('GPT 채팅방을 열었어. 자동 입력이 안 되면 복사한 내용을 직접 붙여넣어 줘.');
-       },true);go.disabled=!selected;
-create('p',body,'제타에서는 선택 시 화면에 표시된 말풍선 DOM만 읽어. 이전 구간이 로드되지 않았다면 수동으로 스크롤해 줘. GPT 입력창 자동 채우기를 시도하지만 브라우저 제한으로 실패할 수 있어. 실패하면 직접 붙여넣고, 전송은 항상 직접 눌러 줘.','font-size:11px;color:#777;margin-top:12px');
+      const go=btn(bottom,'GPT로 가져가기',async()=>{
+        const target=list.find(r=>r.id===select.value);
+        if(!target){toast('GPT 채팅방을 먼저 선택해 줘.');return;}
+        if(!selected?.length){toast('구간을 먼저 선택해 줘.');return;}
+        const payload=promptText();
+        const mobile=/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+        // On mobile the current tab navigates away, so copy the manual fallback first.
+        if(mobile){
+          try{await navigator.clipboard.writeText(payload);}catch{}
+          const opened=openGPT(target.url,payload);
+          if(!opened)toast('GPT 채팅방으로 이동하지 못했어. 복사 버튼을 이용해 줘.');
+          return;
+        }
+
+        // Desktop must open synchronously from the click to avoid popup blocking.
+        const opened=openGPT(target.url,payload);
+        try{await navigator.clipboard.writeText(payload);}catch{}
+        if(!opened){
+          toast('새 탭 열기가 차단됐어. 팝업 허용 후 다시 눌러 줘.');
+          return;
+        }
+        toast('GPT 채팅방을 열었어. 입력창 자동 채우기를 시도해.');
+      },true);go.disabled=!selected;
+create('p',body,'제타에서는 선택 시 화면에 표시된 말풍선 DOM만 읽어. 이전 구간이 로드되지 않았다면 수동으로 스크롤해 줘. GPT에서는 입력창 자동 채우기만 시도하고 전송은 하지 않아. 자동 입력이 실패할 때를 대비해 같은 내용은 클립보드에도 복사해.','font-size:11px;color:#777;margin-top:12px');
     }
     function mount(){
       if(document.getElementById('zgm41-trigger'))return;
