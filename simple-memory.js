@@ -1,7 +1,7 @@
 (() => {
   'use strict';
-  if (window.__ZGM_V46__) return;
-  window.__ZGM_V46__ = true;
+  if (window.__ZGM_V47__) return;
+  window.__ZGM_V47__ = true;
   const host = location.hostname;
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
   const frameSite = host === 'frame.pingpong.ai';
@@ -10,6 +10,7 @@
 
   const CHANNEL = 'zgm.v41.bridge';
   const HANDOFF_HASH = 'zgmjob';
+  const HANDOFF_NAME_PREFIX = '__ZGM_HANDOFF_V1__:';
   const BASE = 'zgm-independent-v4-'; // 기존 방 목록 키 유지
   const ROOM_KEY = BASE+'rooms', PENDING_KEY = BASE+'pending';
   const MAX_MESSAGES = 40, MAX_AGE = 15*60*1000;
@@ -139,14 +140,19 @@
         seen.add(bubble);
         arr.push({row,bubble,role,text,speaker:speakerFromBubble(bubble,text)});
       }
-      // Keep DOM order, then compensate only when the scroll stack itself is flex-col-reverse.
+      // Sort by the messages' actual visual positions. Zeta's chat stack uses
+      // flex-col-reverse, but its DOM order is not a reliable chronology signal.
+      // Visual top -> bottom is exactly the order the user sees/selects.
       arr.sort((a,b)=>{
-        if(a.bubble===b.bubble)return 0;
+        const ar=a.row?.getBoundingClientRect?.()||a.bubble.getBoundingClientRect();
+        const br=b.row?.getBoundingClientRect?.()||b.bubble.getBoundingClientRect();
+        const dy=(ar?.top||0)-(br?.top||0);
+        if(Math.abs(dy)>1)return dy;
+        const ax=ar?.left||0,bx=br?.left||0;
+        if(Math.abs(ax-bx)>1)return ax-bx;
         const pos=a.bubble.compareDocumentPosition(b.bubble);
         return pos&Node.DOCUMENT_POSITION_FOLLOWING?-1:1;
       });
-      const stack=root.parentElement?.closest?.('.flex-col-reverse')||root.closest?.('.flex-col-reverse');
-      if(stack)arr.reverse();
       return arr;
     }
     function entryIndexFromEvent(event,current){
@@ -357,17 +363,28 @@
         return editableText(el).trim().length>0;
       }catch{return false;}
     }
+    let handoffConsumed=false;
     async function consumeHandoff(){
-      const hash=String(location.hash||'').replace(/^#/,'');
-      if(!hash)return;
+      if(handoffConsumed)return false;
       let raw='';
+      const hash=String(location.hash||'').replace(/^#/,'');
       try{raw=new URLSearchParams(hash).get(HANDOFF_HASH)||'';}catch{}
-      if(!raw)return;
+      if(!raw){
+        try{
+          const n=String(window.name||'');
+          if(n.startsWith(HANDOFF_NAME_PREFIX))raw=n.slice(HANDOFF_NAME_PREFIX.length);
+        }catch{}
+      }
+      if(!raw)return false;
       const job=decodeTransfer(raw);
-      // Remove the conversation text from the address bar/history as soon as it is read.
-      try{history.replaceState(history.state,'',location.pathname+location.search);}catch{}
-      if(!job||job.v!==1||typeof job.text!=='string'||!job.text||job.text.length>300000)return;
-      if(!Number.isFinite(job.at)||Date.now()-job.at>MAX_AGE)return;
+      if(!job||job.v!==1||typeof job.text!=='string'||!job.text||job.text.length>300000)return false;
+      if(!Number.isFinite(job.at)||Date.now()-job.at>MAX_AGE)return false;
+      handoffConsumed=true;
+      toast('서사 정리 내용을 받았어. GPT 입력창을 찾는 중…');
+      // Clear both transport channels before touching the composer so refresh/back
+      // cannot fill the same prompt twice.
+      try{if(String(window.name||'').startsWith(HANDOFF_NAME_PREFIX))window.name='';}catch{}
+      try{if(location.hash)history.replaceState(history.state,'',location.pathname+location.search);}catch{}
       const deadline=Date.now()+30000;
       let prompt=null;
       while(Date.now()<deadline){
@@ -375,14 +392,20 @@
         if(prompt)break;
         await sleep(200);
       }
-      if(!prompt){toast('GPT 입력창을 찾지 못했어. 복사된 내용을 직접 붙여넣어 줘.');return;}
+      if(!prompt){toast('GPT 입력창을 찾지 못했어. 복사된 내용을 직접 붙여넣어 줘.');return true;}
       const ok=await insertPrompt(prompt,job.text);
       if(ok){
         prompt.focus();
         toast('GPT 입력창에 자동으로 채웠어. 확인한 뒤 전송은 직접 눌러 줘.');
       }else toast('자동 입력에 실패했어. 복사된 내용을 직접 붙여넣어 줘.');
+      return true;
     }
+    // ChatGPT can finish its SPA navigation after the remote script loads.
+    // A few bounded retries cover that transition without continuous polling.
     consumeHandoff();
+    setTimeout(consumeHandoff,400);
+    setTimeout(consumeHandoff,1200);
+    window.addEventListener('pageshow',()=>setTimeout(consumeHandoff,80),{once:true});
   }
 
 if(parentSite){
@@ -450,23 +473,32 @@ ${body}`;
     }
     // Cross-site handoff uses the URL fragment, which is not sent as an HTTP request.
     // ChatGPT consumes it once, removes it from the address bar, and only fills the composer.
-    function openGPT(url,payload){
-      let target='';
+    function buildGPTTarget(url,payload){
       try{
+        const encoded=encodeTransfer({v:1,text:payload,at:Date.now()});
         const u=new URL(url);
         u.searchParams.set('no_universal_links','1');
-        u.hash=`${HANDOFF_HASH}=${encodeTransfer({v:1,text:payload,at:Date.now()})}`;
-        target=u.toString();
-      }catch{return false;}
-      const mobile=/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-      if(mobile){
-        location.assign(target);
-        return true;
-      }
-      const popup=window.open(target,'_blank');
-      if(!popup)return false;
+        u.hash=`${HANDOFF_HASH}=${encoded}`;
+        return {url:u.toString(),encoded};
+      }catch{return null;}
+    }
+    function prepareGPTWindow(){
+      try{
+        const popup=window.open('about:blank','_blank');
+        if(!popup||popup.closed)return null;
+        return popup;
+      }catch{return null;}
+    }
+    function navigateGPTWindow(popup,url,payload){
+      const target=buildGPTTarget(url,payload);
+      if(!popup||!target)return false;
+      // window.name is a second handoff channel in case ChatGPT removes the hash
+      // during its initial SPA navigation. The GPT-side code clears it after use.
+      try{popup.name=HANDOFF_NAME_PREFIX+target.encoded;}catch{}
       try{popup.opener=null;}catch{}
-      return true;
+      try{popup.location.replace(target.url);return true;}catch{
+        try{popup.location.href=target.url;return true;}catch{return false;}
+      }
     }
     function promptText(){
       if(!selected?.length)return '';
@@ -561,24 +593,22 @@ ${body}`;
         if(!target){toast('GPT 채팅방을 먼저 선택해 줘.');return;}
         if(!selected?.length){toast('구간을 먼저 선택해 줘.');return;}
         const payload=promptText();
-        const mobile=/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
-        // On mobile the current tab navigates away, so copy the manual fallback first.
-        if(mobile){
+        // IMPORTANT: open the new tab synchronously inside the user's click.
+        // Waiting for clipboard first causes iOS Safari to treat window.open as a popup.
+        const popup=prepareGPTWindow();
+        if(!popup){
           try{await navigator.clipboard.writeText(payload);}catch{}
-          const opened=openGPT(target.url,payload);
-          if(!opened)toast('GPT 채팅방으로 이동하지 못했어. 복사 버튼을 이용해 줘.');
+          toast('새 탭이 차단됐어. Safari의 팝업 차단 설정을 확인해 줘. 내용은 복사를 시도했어.');
           return;
         }
-
-        // Desktop must open synchronously from the click to avoid popup blocking.
-        const opened=openGPT(target.url,payload);
         try{await navigator.clipboard.writeText(payload);}catch{}
-        if(!opened){
-          toast('새 탭 열기가 차단됐어. 팝업 허용 후 다시 눌러 줘.');
+        if(!navigateGPTWindow(popup,target.url,payload)){
+          try{popup.close();}catch{}
+          toast('GPT 채팅방으로 이동하지 못했어. 복사된 내용을 직접 붙여넣어 줘.');
           return;
         }
-        toast('GPT 채팅방을 열었어. 입력창 자동 채우기를 시도해.');
+        toast('GPT 채팅방을 새 탭으로 열었어. 입력창 자동 채우기를 시도해.');
       },true);go.disabled=!selected;
 create('p',body,'제타에서는 선택 시 화면에 표시된 말풍선 DOM만 읽어. 이전 구간이 로드되지 않았다면 수동으로 스크롤해 줘. GPT에서는 입력창 자동 채우기만 시도하고 전송은 하지 않아. 자동 입력이 실패할 때를 대비해 같은 내용은 클립보드에도 복사해.','font-size:11px;color:#777;margin-top:12px');
     }
