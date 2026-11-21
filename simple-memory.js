@@ -1,7 +1,7 @@
 (() => {
   'use strict';
-  if (window.__ZGM_V43__) return;
-  window.__ZGM_V43__ = true;
+  if (window.__ZGM_V45__) return;
+  window.__ZGM_V45__ = true;
   const host = location.hostname;
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
   const frameSite = host === 'frame.pingpong.ai';
@@ -9,6 +9,7 @@
   if (!parentSite && !frameSite && !gptSite) return;
 
   const CHANNEL = 'zgm.v41.bridge';
+  const HANDOFF = 'zgm.v45.gpt.handoff';
   const BASE = 'zgm-independent-v4-'; // 기존 방 목록 키 유지
   const ROOM_KEY = BASE+'rooms', PENDING_KEY = BASE+'pending';
   const MAX_MESSAGES = 40, MAX_AGE = 15*60*1000;
@@ -105,9 +106,14 @@
       if(notify){clearMarks();send('cancel');}
     }
     function onClick(e){
-      const row=e.target.closest?.('div.flex.flex-row.items-start.py-2');
-      if(!row||!log()?.contains(row))return;
-      const index=entries.findIndex(x=>x.row===row);
+      if(!picking)return;
+      // Resolve actual rendered bubble first: theme wrappers, nested spans and
+      // shadow retargeting should not prevent selecting a displayed message.
+      const path=typeof e.composedPath==='function'?e.composedPath():[];
+      const candidates=[...path,e.target].filter(x=>x instanceof Element);
+      const index=entries.findIndex(({row,bubble})=>candidates.some(x=>
+        x===bubble || bubble.contains(x) || x===row || (row.contains(x) && x.closest?.('div.flex.flex-row.items-start.py-2')===row)
+      ));
       if(index<0)return;
       e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();
       if(first==null){first=index;mark(index,index);bar.querySelector('[data-status]').textContent='끝 말풍선을 선택해 줘';return;}
@@ -119,7 +125,7 @@
     }
     function begin(){
       cancelSelection(false);clearMarks();entries=getEntries();first=null;
-      if(!entries.length){send('error',{message:'iframe 내부에서 말풍선을 찾지 못했어. 채팅 화면이 열린 상태인지 확인해 줘.'});return;}
+      if(!entries.length){send('error',{message:'iframe은 연결됐지만 현재 화면의 말풍선 DOM을 찾지 못했어. 채팅 화면을 열고 확인해 줘.'});return;}
       picking=true;bar=create('div',document.body);bar.id='zgm41-pickbar';
       const status=create('span',bar,'시작 말풍선을 선택해 줘');status.dataset.status='1';
       const btn=create('button',bar,'선택 취소');btn.onclick=()=>cancelSelection(true);
@@ -136,9 +142,86 @@
     send('frame-ready');
   }
 
-  if(parentSite){
+     if(gptSite){
+     // No fetch/API calls and no auto-send. The receiving page only accepts
+     // a message from its exact Zeta opener, with a strict sender origin.
+     let pending=null, filling=false;
+     const allowedOrigin = origin => /^https:\/\/(?:[^/]+\.)?zeta-ai\.io$/.test(origin);
+     function inputElement(){
+       return document.querySelector('#prompt-textarea[contenteditable="true"]') ||
+         document.querySelector('[data-testid="composer-input"] [contenteditable="true"]') ||
+         document.querySelector('[contenteditable="true"][data-lexical-editor]') ||
+         document.querySelector('textarea#prompt-textarea');
+     }
+     function fillText(text){
+       const el=inputElement();
+       if(!el || !el.isConnected || el.getAttribute('contenteditable')==='false') return false;
+       el.focus();
+       if(el instanceof HTMLTextAreaElement){
+         const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')?.set;
+         if(setter)setter.call(el,text); else el.value=text;
+         el.dispatchEvent(new Event('input',{bubbles:true}));
+         return el.value===text;
+       }
+       // The editor may be ProseMirror; use an editable action so the editor
+       // receives normal input events rather than only altering visual HTML.
+       try {
+         const selection=window.getSelection();
+         const range=document.createRange();range.selectNodeContents(el);
+         selection.removeAllRanges();selection.addRange(range);
+         if(document.execCommand('insertText',false,text))return true;
+       } catch {}
+       try {
+         el.replaceChildren(document.createTextNode(text));
+         el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));
+         return el.textContent===text;
+       }catch{return false;}
+     }
+     function attemptFill(){
+       if(!pending || filling)return;
+       filling=true;
+       const deadline=Date.now()+12000;
+       const loop=()=>{
+         if(!pending){filling=false;return;}
+         if(fillText(pending.text)){
+           const msg=pending;pending=null;filling=false;
+           toast('GPT 입력창에 내용을 채웠어. 확인 후 직접 전송해 줘.');
+           return;
+         }
+         if(Date.now()>deadline){
+           pending=null;filling=false;
+           toast('자동 입력을 완료하지 못했어. 제타에서 복사한 내용을 붙여넣어 줘.');
+           return;
+         }
+         setTimeout(loop,350);
+       };
+       loop();
+     }
+     window.addEventListener('message',e=>{
+       if(e.source!==window.opener || !allowedOrigin(e.origin))return;
+       if(e.data?.channel!==HANDOFF || e.data.kind!=='fill')return;
+       const value=e.data.text;
+       if(typeof value!=='string'||!value||value.length>300000)return;
+       pending={text:value};
+       try{window.opener.postMessage({channel:HANDOFF,kind:'received',nonce:e.data.nonce},e.origin);}catch{}
+       attemptFill();
+     });
+     // A readiness ping contains no chat text. Repeated only for the first
+     // few seconds after this GPT tab loads, never during Zeta chat use.
+     if(window.opener){
+       let tries=0;
+       const ready=()=>{
+         if(!window.opener || tries++>=24)return;
+         try{window.opener.postMessage({channel:HANDOFF,kind:'ready'},'*');}catch{return;}
+         setTimeout(ready,500);
+       };
+       ready();
+     }
+   }
+
+if(parentSite){
     let selected=null,activeTab='main',purpose='narrator',scope='withHistory',roomId='';
-    let iframeOrigin='https://frame.pingpong.ai', waitingForFrame=false;
+    let iframeOrigin='https://frame.pingpong.ai', waitingForFrame=false, frameResponded=false;
     function locateFrame(){
       const arr=[...document.querySelectorAll('iframe')];
       return arr.find(f=>{try{return new URL(f.src,location.href).hostname==='frame.pingpong.ai';}catch{return false;}})||null;
@@ -148,7 +231,7 @@
       if(!f?.contentWindow){toast('채팅 iframe을 찾지 못했어. 제타 채팅방 화면에서 다시 시도해 줘.');return false;}
       if(kind==='begin'){
         waitingForFrame=true;
-        setTimeout(()=>{if(waitingForFrame){waitingForFrame=false;toast('iframe에서 응답이 없어. Stay가 frame.pingpong.ai 안에서도 스크립트를 실행하는지 확인해 줘.');show('main');}},1700);
+        setTimeout(()=>{if(waitingForFrame){waitingForFrame=false;toast('iframe 응답 없음: Stay 로더가 frame.pingpong.ai에서도 실행되도록 설정해 줘.');show('main');}},2500);
       }
       f.contentWindow.postMessage({channel:CHANNEL,kind},iframeOrigin);
       return true;
@@ -156,7 +239,8 @@
     window.addEventListener('message',e=>{
       if(e.origin!==iframeOrigin || e.data?.channel!==CHANNEL)return;
       const f=locateFrame();if(!f||e.source!==f.contentWindow)return;
-      if(e.data.kind==='ready'||e.data.kind==='error'||e.data.kind==='selected'||e.data.kind==='cancel')waitingForFrame=false;
+      if(e.data.kind==='frame-ready')frameResponded=true;
+      if(e.data.kind==='ready'||e.data.kind==='error'||e.data.kind==='selected'||e.data.kind==='cancel'){waitingForFrame=false;frameResponded=true;}
       if(e.data.kind==='selected'){
         const arr=e.data.messages;
         if(!Array.isArray(arr)||!arr.length||arr.length>MAX_MESSAGES||!arr.every(m=>(m.role==='user'||m.role==='character')&&typeof m.text==='string'&&m.text.length<=24000))return;
@@ -198,18 +282,30 @@
 ${body}`;
       }).join('\n\n');
     }
-    function openGPT(url,desktopTab){
-      if(desktopTab){
-        const popup=window.open('about:blank','_blank');
-        if(popup){try{popup.opener=null;}catch{};return {go(){popup.location.replace(url);},cancel(){popup.close();}};}
-        return {go(){toast('새 탭이 차단됐어. 팝업을 허용하고 다시 눌러 줘.');},cancel(){}};
-      }
-      return {go(){
-        // HTTPS Universal/App Link: installed apps may receive the link;
-        // otherwise the browser opens the same conversation URL.
-        // iOS/Android may choose the web page even when app is installed.
-        location.assign(url);
-      },cancel(){}};
+    // Open ChatGPT in a new tab while retaining a browser-standard postMessage
+    // channel. If the destination uses COOP or Safari cuts window.opener, the
+    // clipboard remains a manual fallback; we never claim the transfer worked.
+    function openGPT(url, payload) {
+      const popup = window.open('about:blank', '_blank');
+      if (!popup) return false;
+      const nonce = (crypto.randomUUID?.() || `${Date.now()}_${Math.random()}`);
+      let done = false;
+      const onMessage = e => {
+        if (done || e.source !== popup || e.origin !== 'https://chatgpt.com') return;
+        if (e.data?.channel !== HANDOFF) return;
+        if (e.data.kind === 'ready') {
+          try { popup.postMessage({channel:HANDOFF,kind:'fill',nonce,text:payload},'https://chatgpt.com'); } catch {}
+        }
+        if (e.data.kind === 'received' && e.data.nonce === nonce) {
+          done = true;
+          window.removeEventListener('message',onMessage);
+        }
+      };
+      window.addEventListener('message',onMessage);
+      setTimeout(() => { window.removeEventListener('message',onMessage); }, 20000);
+      try { popup.location.replace(url); }
+      catch { window.removeEventListener('message',onMessage); try{popup.close();}catch{} return false; }
+      return true;
     }
     function promptText(){
       if(!selected?.length)return '';
@@ -280,7 +376,7 @@ ${body}`;
       btn(row,selected?'다시 선택':'구간 선택',()=>{
         if(!toFrame('begin'))return;
         document.getElementById('zgm41-overlay')?.remove();
-        toast('시작 말풍선 → 끝 말풍선을 차례로 눌러 줘. 선택바가 안 뜨면 Stay의 iframe 실행 권한을 확인해야 해.');
+        toast('시작 말풍선 → 끝 말풍선을 차례로 눌러 줘. 선택바가 나타나지 않으면 iframe 실행 설정을 확인해 줘.');
       },true);
       if(selected)btn(row,'선택 초기화',()=>{selected=null;toFrame('clear');show('main');});
       label(body,'옵션 1 · 사용 용도');
@@ -299,23 +395,22 @@ ${body}`;
         try{await navigator.clipboard.writeText(promptText());toast('대화와 프롬프트를 복사했어.');}
         catch{toast('클립보드 권한 때문에 복사에 실패했어.');}
       },true);copy.disabled=!selected;
-      const go=btn(bottom,'GPT로 가져가기',async()=>{
-        const target=list.find(r=>r.id===select.value);
-        if(!target){toast('GPT 채팅방을 먼저 선택해 줘.');return;}
-        if(!selected?.length){toast('구간을 먼저 선택해 줘.');return;}
-        const mobile=/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-        const nav=openGPT(target.url,!mobile);
-        try {
-          await navigator.clipboard.writeText(promptText());
-        } catch {
-          nav.cancel();
-          toast('복사 권한이 없어 이동하지 않았어. 먼저 복사 버튼을 눌러 줘.');
-          return;
-        }
-        // User pastes the copied text in ChatGPT; never send it automatically.
-        nav.go();
-      },true);go.disabled=!selected;
-      create('p',body,'제타에서는 선택 시 화면에 표시된 말풍선 DOM만 읽어. 이전 구간이 로드되지 않았다면 수동으로 스크롤해 줘. GPT에서 붙여넣기와 전송은 직접 해 줘.','font-size:11px;color:#777;margin-top:12px');
+             const go=btn(bottom,'GPT로 가져가기',async()=>{
+         const target=list.find(r=>r.id===select.value);
+         if(!target){toast('GPT 채팅방을 먼저 선택해 줘.');return;}
+         if(!selected?.length){toast('구간을 먼저 선택해 줘.');return;}
+         const payload=promptText();
+         // Open synchronously within the click to avoid popup blockers.
+         const opened=openGPT(target.url,payload);
+         // Clipboard is a fallback; a failed copy must not block the handoff.
+         try { await navigator.clipboard.writeText(payload); } catch {}
+         if(!opened){
+           toast('새 탭 열기가 차단됐어. 팝업 허용 후 다시 눌러 줘.');
+           return;
+         }
+         toast('GPT 채팅방을 열었어. 자동 입력이 안 되면 복사한 내용을 직접 붙여넣어 줘.');
+       },true);go.disabled=!selected;
+create('p',body,'제타에서는 선택 시 화면에 표시된 말풍선 DOM만 읽어. 이전 구간이 로드되지 않았다면 수동으로 스크롤해 줘. GPT 입력창 자동 채우기를 시도하지만 브라우저 제한으로 실패할 수 있어. 실패하면 직접 붙여넣고, 전송은 항상 직접 눌러 줘.','font-size:11px;color:#777;margin-top:12px');
     }
     function mount(){
       if(document.getElementById('zgm41-trigger'))return;
