@@ -1,20 +1,7 @@
-// ==UserScript==
-// @name         Zeta GPT Memory V4.2 - iframe bridge + 구간 선택
-// @namespace    local.zeta.gptmemory.independent
-// @version      4.2.0
-// @description  제타의 화면 DOM 구간 선택(최대 20턴), GPT 방 관리, 목적별 프롬프트. 제타 내부 API 사용하지 않음.
-// @match        https://zeta-ai.io/*
-// @match        https://*.zeta-ai.io/*
-// @match        https://frame.pingpong.ai/*
-// @match        https://chatgpt.com/*
-// @run-at       document-idle
-// @all-frames   true
-// @grant        none
-// ==/UserScript==
 (() => {
   'use strict';
-  if (window.__ZGM_V42__) return;
-  window.__ZGM_V42__ = true;
+  if (window.__ZGM_V43__) return;
+  window.__ZGM_V43__ = true;
   const host = location.hostname;
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
   const frameSite = host === 'frame.pingpong.ai';
@@ -88,7 +75,15 @@
         const clone=bubble.cloneNode(true);
         clone.querySelectorAll('button,svg,script,style,select,textarea,input,[aria-hidden="true"],.message-context-menu-trigger').forEach(e=>e.remove());
         const text=clean(clone.innerText||clone.textContent).replace(/\n{3,}/g,'\n\n');
-        if(text && text.length<=24000)arr.push({row,bubble,role:user?'user':'character',text});
+        if(text && text.length<=24000){
+          // Keep an isolated rendered name node when the DOM provides one.
+          const firstLeaf=[...clone.querySelectorAll('*')].find(el=>
+            el.children.length===0 && /^[가-힣A-Za-z][가-힣A-Za-z0-9 _.-]{0,19}$/.test(clean(el.textContent)) &&
+            text.startsWith(clean(el.textContent)) && text.length>clean(el.textContent).length
+          );
+          const speaker=firstLeaf?clean(firstLeaf.textContent):'';
+          arr.push({row,bubble,role:user?'user':'character',text,speaker});
+        }
       }
       // DOM may be newest-first for flex-col-reverse; keep a stable chronological order.
       const stack = root.closest('.flex-col-reverse');
@@ -120,7 +115,7 @@
       if(slice.length>MAX_MESSAGES){bar.querySelector('[data-status]').textContent=`${slice.length}개 메시지 — 최대 40개(20턴)까지`;return;}
       mark(lo,hi);
       cancelSelection(false);
-      send('selected',{messages:slice.map(m=>({role:m.role,text:m.text})),count:Math.ceil(slice.length/2)});
+      send('selected',{messages:slice.map(m=>({role:m.role,text:m.text,speaker:m.speaker})),count:Math.ceil(slice.length/2)});
     }
     function begin(){
       cancelSelection(false);clearMarks();entries=getEntries();first=null;
@@ -165,13 +160,57 @@
       if(e.data.kind==='selected'){
         const arr=e.data.messages;
         if(!Array.isArray(arr)||!arr.length||arr.length>MAX_MESSAGES||!arr.every(m=>(m.role==='user'||m.role==='character')&&typeof m.text==='string'&&m.text.length<=24000))return;
-        selected=arr.map(m=>({role:m.role,text:m.text}));
+        selected=arr.map(m=>({role:m.role,text:m.text,speaker:typeof m.speaker==='string'?m.speaker:''}));
         show('main');toast(`${Math.ceil(arr.length/2)}턴 · 메시지 ${arr.length}개 선택했어.`);
       }
       if(e.data.kind==='error'){toast(String(e.data.message||'iframe 메시지 확인 실패'));show('main');}
       if(e.data.kind==='cancel'){show('main');}
     });
     const count=()=>Math.ceil((selected?.length||0)/2);
+    function dialogueText(){
+      if(!selected?.length)return '';
+      const names={};
+      for(const role of ['character','user']){
+        const group=selected.filter(m=>m.role===role);
+        // Prefer a separate, already rendered DOM name; never request hidden user data.
+        const explicit=group.map(m=>clean(m.speaker)).filter(Boolean);
+        if(explicit.length && explicit.every(n=>n===explicit[0])){
+          names[role]=explicit[0];continue;
+        }
+        // Some Zeta layouts concatenate the displayed name with the message.
+        // Only recover a prefix repeatedly observed across different messages.
+        if(group.length>=2){
+          let prefix=group[0].text;
+          for(const m of group.slice(1)){
+            let i=0;while(i<prefix.length && i<m.text.length && prefix[i]===m.text[i])i++;
+            prefix=prefix.slice(0,i);
+          }
+          if(/^[가-힣]{2,8}$/.test(prefix) && group.every(m=>m.text.length>prefix.length)){
+            names[role]=prefix;
+          }
+        }
+      }
+      return selected.map(m=>{
+        const speaker=names[m.role]||(m.role==='user'?'유저':'캐릭터');
+        const body=names[m.role] && m.text.startsWith(names[m.role])
+          ? clean(m.text.slice(names[m.role].length)) : clean(m.text);
+        return `${speaker}:
+${body}`;
+      }).join('\n\n');
+    }
+    function openGPT(url,desktopTab){
+      if(desktopTab){
+        const popup=window.open('about:blank','_blank');
+        if(popup){try{popup.opener=null;}catch{};return {go(){popup.location.replace(url);},cancel(){popup.close();}};}
+        return {go(){toast('새 탭이 차단됐어. 팝업을 허용하고 다시 눌러 줘.');},cancel(){}};
+      }
+      return {go(){
+        // HTTPS Universal/App Link: installed apps may receive the link;
+        // otherwise the browser opens the same conversation URL.
+        // iOS/Android may choose the web page even when app is installed.
+        location.assign(url);
+      },cancel(){}};
+    }
     function promptText(){
       if(!selected?.length)return '';
       const p=purpose==='narrator'
@@ -180,7 +219,7 @@
       const s=scope==='withHistory'
         ? '이 GPT 채팅방에 남아 있는 이전 서사 정리가 참고 가능하면 함께 반영해 통합 요약을 작성해 줘. 이전 기록이 확인되지 않으면 이번 발췌만 사용하고 모순을 임의로 해결하지 마.'
         : '이전 서사 기록을 사용하지 말고 이번 선택 대화만 근거로 정리해 줘.';
-      return `[제타 서사 정리 요청]\n\n[사용 용도]\n${p}\n\n[정리 범위]\n${s}\n\n[공통 규칙]\n- 원문에 없는 이름, 사건, 설정, 감정을 새로 만들지 마.\n- 확인되지 않은 사실이나 화자는 추측하지 마.\n- 사건 순서와 관계 변화, 약속, 비밀 및 복선은 보존해.\n- 반복 농담과 수식은 줄여.\n- 최종 결과는 바로 복사할 수 있는 정리문만 작성해.\n\n[선택 구간: 약 ${count()}턴 / 메시지 ${selected.length}개]\n${selected.map((m,i)=>`\n[${i+1}. ${m.role==='user'?'유저':'캐릭터'}]\n${m.text}`).join('\n')}\n\n[선택 구간 끝]`;
+      return `[제타 서사 정리 요청]\n\n[사용 용도]\n${p}\n\n[정리 범위]\n${s}\n\n[공통 규칙]\n- 원문에 없는 이름, 사건, 설정, 감정을 새로 만들지 마.\n- 확인되지 않은 사실이나 화자는 추측하지 마.\n- 사건 순서와 관계 변화, 약속, 비밀 및 복선은 보존해.\n- 반복 농담과 수식은 줄여.\n- 최종 결과는 바로 복사할 수 있는 정리문만 작성해.\n\n[선택 구간: 약 ${count()}턴 / 메시지 ${selected.length}개]\n${dialogueText()}\n\n[선택 구간 끝]`;
     }
     function newDialog(){
       document.getElementById('zgm41-overlay')?.remove();
@@ -252,7 +291,7 @@
       radio(body,'선택한 내용만 정리','zgm41-scope','only',scope==='only',v=>scope=v);
       if(selected){
         label(body,'선택한 대화 미리보기');const box=create('textarea',body);box.readOnly=true;box.rows=5;
-        box.value=selected.map((m,i)=>`[${i+1}. ${m.role==='user'?'유저':'캐릭터'}]\n${m.text}`).join('\n\n');
+        box.value=dialogueText();
       }
       const bottom=buttons(body);
       const copy=btn(bottom,'프롬프트 + 대화 복사',async()=>{
@@ -264,15 +303,17 @@
         const target=list.find(r=>r.id===select.value);
         if(!target){toast('GPT 채팅방을 먼저 선택해 줘.');return;}
         if(!selected?.length){toast('구간을 먼저 선택해 줘.');return;}
-        const text=promptText();
+        const mobile=/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+        const nav=openGPT(target.url,!mobile);
         try {
-          await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(promptText());
         } catch {
+          nav.cancel();
           toast('복사 권한이 없어 이동하지 않았어. 먼저 복사 버튼을 눌러 줘.');
           return;
         }
-        // Cross-origin localStorage is isolated; user pastes on ChatGPT.
-        location.assign(target.url);
+        // User pastes the copied text in ChatGPT; never send it automatically.
+        nav.go();
       },true);go.disabled=!selected;
       create('p',body,'제타에서는 선택 시 화면에 표시된 말풍선 DOM만 읽어. 이전 구간이 로드되지 않았다면 수동으로 스크롤해 줘. GPT에서 붙여넣기와 전송은 직접 해 줘.','font-size:11px;color:#777;margin-top:12px');
     }
