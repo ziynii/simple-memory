@@ -1,19 +1,23 @@
 (() => {
   'use strict';
-  if (window.__ZGM_V48__) return;
-  window.__ZGM_V48__ = true;
+  if (window.__ZGM_V49__) return;
+  window.__ZGM_V49__ = true;
 
   const host = location.hostname;
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
   const frameSite = host === 'frame.pingpong.ai';
-  const gptSite = host === 'chatgpt.com' && window === window.top;
+  const gptSite = /(^|\.)chatgpt\.com$/.test(host) && window === window.top;
   if (!parentSite && !frameSite && !gptSite) return;
 
-  const CHANNEL = 'zgm.v48.bridge';
+  const CHANNEL = 'zgm.v49.bridge';
   const HANDOFF_HASH = 'zgmjob';
-  const HANDOFF_NAME_PREFIX = '__ZGM_HANDOFF_V1__:';
+  const HANDOFF_NAME_PREFIX = '__ZGM_JOB_ID_V2__:';
+  const STORAGE_REQUEST_EVENT = '__ZGM_GM_REQUEST_V1__';
+  const STORAGE_RESPONSE_EVENT = '__ZGM_GM_RESPONSE_V1__';
   const BASE = 'zgm-independent-v4-';
   const ROOM_KEY = BASE + 'rooms';
+  const HANDOFF_KEY = BASE + 'handoff-v2';
+  const GPT_SESSION_KEY = BASE + 'gpt-session-v2';
   const MAX_TURNS = 20;
   const MAX_MESSAGES = MAX_TURNS * 2;
   const MAX_AGE = 15 * 60 * 1000;
@@ -21,22 +25,47 @@
   const clean = s => String(s ?? '').replace(/\u200b/g, '').trim();
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-  function encodeTransfer(value) {
-    const bytes = new TextEncoder().encode(JSON.stringify(value));
-    let binary = '';
-    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  function storageBridgeRequest(operation, key, value, fallback) {
+    return new Promise((resolve, reject) => {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const timer = setTimeout(() => {
+        document.removeEventListener(STORAGE_RESPONSE_EVENT, receive);
+        reject(new Error('공용 저장소 연결 시간 초과'));
+      }, 5000);
+
+      const receive = event => {
+        let response = null;
+        try { response = JSON.parse(String(event.detail || '')); } catch {}
+        if (!response || response.id !== id) return;
+        clearTimeout(timer);
+        document.removeEventListener(STORAGE_RESPONSE_EVENT, receive);
+        if (response.ok) resolve(response.value);
+        else reject(new Error(response.error || '공용 저장소 연결 실패'));
+      };
+
+      document.addEventListener(STORAGE_RESPONSE_EVENT, receive);
+      document.dispatchEvent(new CustomEvent(STORAGE_REQUEST_EVENT, {
+        detail: JSON.stringify({ id, operation, key, value, fallback })
+      }));
+    });
   }
 
-  function decodeTransfer(value) {
-    try {
-      const base64 = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
-      const binary = atob(base64 + '='.repeat((4 - base64.length % 4) % 4));
-      const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
-      return JSON.parse(new TextDecoder().decode(bytes));
-    } catch {
-      return null;
-    }
+  const sharedStorage = {
+    set: (key, value) => storageBridgeRequest('set', key, value, null),
+    get: (key, fallback) => storageBridgeRequest('get', key, null, fallback),
+    del: key => storageBridgeRequest('delete', key, null, null)
+  };
+
+  // GPT가 열리지 못한 채 남은 전달 데이터도 다음 실행 때 15분이 지났으면 정리한다.
+  if (parentSite || gptSite) {
+    setTimeout(async () => {
+      try {
+        const stale = await sharedStorage.get(HANDOFF_KEY, null);
+        if (stale?.at && Date.now() - Number(stale.at) > MAX_AGE) {
+          await sharedStorage.del(HANDOFF_KEY);
+        }
+      } catch {}
+    }, 0);
   }
 
   // Netlify 외부 JS는 페이지 컨텍스트에서 실행된다.
@@ -67,14 +96,14 @@
   };
 
   function toast(message) {
-    document.getElementById('zgm48-toast')?.remove();
+    document.getElementById('zgm49-toast')?.remove();
     const el = create(
       'div',
       document.body,
       message,
       'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#27272a;color:#fff;border-radius:12px;padding:12px 16px;max-width:90vw;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0005'
     );
-    el.id = 'zgm48-toast';
+    el.id = 'zgm49-toast';
     setTimeout(() => el.remove(), 4400);
   }
 
@@ -102,17 +131,17 @@
   }
 
   const css = `
-    #zgm48-trigger,#zgm48-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
-    #zgm48-overlay *{box-sizing:border-box}
-    #zgm48-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
-    #zgm48-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
-    #zgm48-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
-    #zgm48-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
-    #zgm48-overlay button.primary{background:#292929;color:white;border-color:#292929}
-    #zgm48-overlay button:disabled{opacity:.42;cursor:default}
-    #zgm48-overlay input,#zgm48-overlay select,#zgm48-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
-    #zgm48-overlay label{display:block;font-weight:700;margin:12px 0 6px}
-    #zgm48-overlay textarea{resize:vertical}
+    #zgm49-trigger,#zgm49-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
+    #zgm49-overlay *{box-sizing:border-box}
+    #zgm49-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
+    #zgm49-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
+    #zgm49-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
+    #zgm49-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
+    #zgm49-overlay button.primary{background:#292929;color:white;border-color:#292929}
+    #zgm49-overlay button:disabled{opacity:.42;cursor:default}
+    #zgm49-overlay input,#zgm49-overlay select,#zgm49-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
+    #zgm49-overlay label{display:block;font-weight:700;margin:12px 0 6px}
+    #zgm49-overlay textarea{resize:vertical}
   `;
   create('style', document.head || document.documentElement, css);
 
@@ -374,34 +403,81 @@
     }
 
     let handoffConsumed = false;
-    async function consumeHandoff() {
-      if (handoffConsumed) return false;
 
-      let raw = '';
-      const hash = String(location.hash || '').replace(/^#/, '');
-      try { raw = new URLSearchParams(hash).get(HANDOFF_HASH) || ''; } catch {}
-      if (!raw) {
+    function handoffIdFromPage() {
+      let id = '';
+      try {
+        const hash = String(location.hash || '').replace(/^#/, '');
+        id = new URLSearchParams(hash).get(HANDOFF_HASH) || '';
+      } catch {}
+      if (!id) {
         try {
           const name = String(window.name || '');
-          if (name.startsWith(HANDOFF_NAME_PREFIX)) raw = name.slice(HANDOFF_NAME_PREFIX.length);
+          if (name.startsWith(HANDOFF_NAME_PREFIX)) id = name.slice(HANDOFF_NAME_PREFIX.length);
         } catch {}
       }
-      if (!raw) return false;
+      return clean(id);
+    }
 
-      const job = decodeTransfer(raw);
-      if (!job || job.v !== 1 || typeof job.text !== 'string' || !job.text || job.text.length > 300000) return false;
-      if (!Number.isFinite(job.at) || Date.now() - job.at > MAX_AGE) return false;
-
-      handoffConsumed = true;
-      toast('서사 정리 내용을 받았어. GPT 입력창을 찾는 중…');
-
-      // 같은 작업이 새로고침/뒤로가기로 다시 입력되지 않도록 전달용 임시값을 먼저 지운다.
+    function clearHandoffMarkers() {
       try {
         if (String(window.name || '').startsWith(HANDOFF_NAME_PREFIX)) window.name = '';
       } catch {}
       try {
         if (location.hash) history.replaceState(history.state, '', location.pathname + location.search);
       } catch {}
+    }
+
+    async function loadHandoffJob() {
+      const expectedId = handoffIdFromPage();
+
+      let sessionJob = null;
+      try { sessionJob = JSON.parse(sessionStorage.getItem(GPT_SESSION_KEY) || 'null'); } catch {}
+      if (sessionJob && (!expectedId || sessionJob.id === expectedId)) return sessionJob;
+
+      if (!expectedId) return null;
+
+      let job = null;
+      try {
+        job = await sharedStorage.get(HANDOFF_KEY, null);
+      } catch (error) {
+        toast('GPT 전달 저장소에 연결하지 못했어. Stay 로더를 새 버전으로 바꿨는지 확인해 줘.');
+        return null;
+      }
+
+      if (!job || job.id !== expectedId) return null;
+      try { sessionStorage.setItem(GPT_SESSION_KEY, JSON.stringify(job)); } catch {}
+
+      // 제타↔GPT 공용 저장소에는 필요한 순간까지만 보관한다.
+      try { await sharedStorage.del(HANDOFF_KEY); } catch {}
+      return job;
+    }
+
+    async function consumeHandoff() {
+      if (handoffConsumed) return false;
+      const expectedId = handoffIdFromPage();
+
+      const job = await loadHandoffJob();
+      if (!job) {
+        if (expectedId) clearHandoffMarkers();
+        return false;
+      }
+
+      if (job.v !== 2 || typeof job.text !== 'string' || !job.text || job.text.length > 300000) {
+        try { sessionStorage.removeItem(GPT_SESSION_KEY); } catch {}
+        clearHandoffMarkers();
+        return false;
+      }
+      if (!Number.isFinite(job.at) || Date.now() - job.at > MAX_AGE) {
+        try { sessionStorage.removeItem(GPT_SESSION_KEY); } catch {}
+        try { await sharedStorage.del(HANDOFF_KEY); } catch {}
+        clearHandoffMarkers();
+        return false;
+      }
+
+      handoffConsumed = true;
+      clearHandoffMarkers();
+      toast('서사 정리 내용을 받았어. GPT 입력창을 찾는 중…');
 
       const deadline = Date.now() + 30000;
       let prompt = null;
@@ -412,11 +488,15 @@
       }
 
       if (!prompt) {
+        try { sessionStorage.removeItem(GPT_SESSION_KEY); } catch {}
         toast('GPT 입력창을 찾지 못했어. 복사된 내용을 직접 붙여넣어 줘.');
         return true;
       }
 
       const ok = await insertPrompt(prompt, job.text);
+      try { sessionStorage.removeItem(GPT_SESSION_KEY); } catch {}
+      try { await sharedStorage.del(HANDOFF_KEY); } catch {}
+
       if (ok) {
         prompt.focus();
         toast('GPT 입력창에 자동으로 채웠어. 확인한 뒤 전송은 직접 눌러 줘.');
@@ -426,10 +506,15 @@
       return true;
     }
 
-    consumeHandoff();
-    setTimeout(consumeHandoff, 400);
-    setTimeout(consumeHandoff, 1200);
-    window.addEventListener('pageshow', () => setTimeout(consumeHandoff, 80), { once: true });
+
+    const startHandoffConsumer = async () => {
+      while (!document.body) await sleep(50);
+      await consumeHandoff();
+      setTimeout(consumeHandoff, 500);
+      setTimeout(consumeHandoff, 1400);
+    };
+    startHandoffConsumer();
+    window.addEventListener('pageshow', () => setTimeout(consumeHandoff, 100), { once: true });
   }
 
   // ---------------------------------------------------------------------------
@@ -563,15 +648,14 @@
       confirmedPrompt = '';
     }
 
-    function buildGPTTarget(url, payload) {
+    function buildGPTTarget(url, jobId) {
       try {
-        const encoded = encodeTransfer({ v: 1, text: payload, at: Date.now() });
         const target = new URL(url);
         target.searchParams.set('no_universal_links', '1');
-        target.hash = `${HANDOFF_HASH}=${encoded}`;
-        return { url: target.toString(), encoded };
+        target.hash = `${HANDOFF_HASH}=${encodeURIComponent(jobId)}`;
+        return target.toString();
       } catch {
-        return null;
+        return '';
       }
     }
 
@@ -585,17 +669,18 @@
       }
     }
 
-    function navigateGPTWindow(popup, url, payload) {
-      const target = buildGPTTarget(url, payload);
+    function navigateGPTWindow(popup, url, jobId) {
+      const target = buildGPTTarget(url, jobId);
       if (!popup || !target) return false;
-      try { popup.name = HANDOFF_NAME_PREFIX + target.encoded; } catch {}
-      try { popup.opener = null; } catch {}
+      try { popup.name = HANDOFF_NAME_PREFIX + jobId; } catch {}
       try {
-        popup.location.replace(target.url);
+        popup.location.replace(target);
+        popup.focus?.();
         return true;
       } catch {
         try {
-          popup.location.href = target.url;
+          popup.location.href = target;
+          popup.focus?.();
           return true;
         } catch {
           return false;
@@ -604,11 +689,11 @@
     }
 
     function newDialog() {
-      document.getElementById('zgm48-overlay')?.remove();
+      document.getElementById('zgm49-overlay')?.remove();
       const overlay = create('div', document.body);
-      overlay.id = 'zgm48-overlay';
+      overlay.id = 'zgm49-overlay';
       const dialog = create('div', overlay);
-      dialog.id = 'zgm48-dialog';
+      dialog.id = 'zgm49-dialog';
       overlay.onclick = event => { if (event.target === overlay) overlay.remove(); };
 
       const head = create('div', dialog, null, 'display:flex;justify-content:space-between;align-items:center;gap:8px');
@@ -786,12 +871,12 @@
       }
 
       label(body, '옵션 1 · 사용 용도');
-      radio(body, '나레이션 덮어씌우기 용도', 'zgm48-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
-      radio(body, '유저 프로필에 넣는 용도', 'zgm48-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
+      radio(body, '나레이션 덮어씌우기 용도', 'zgm49-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
+      radio(body, '유저 프로필에 넣는 용도', 'zgm49-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
 
       label(body, '옵션 2 · 정리 범위');
-      radio(body, '이전 서사와 함께 정리', 'zgm48-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
-      radio(body, '복사한 내용만 정리', 'zgm48-scope', 'only', scope === 'only', value => { scope = value; });
+      radio(body, '이전 서사와 함께 정리', 'zgm49-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
+      radio(body, '복사한 내용만 정리', 'zgm49-scope', 'only', scope === 'only', value => { scope = value; });
 
       const confirmRow = buttons(body);
       const confirmButton = btn(confirmRow, '확인', () => {
@@ -853,7 +938,28 @@
         }
 
         try { await navigator.clipboard.writeText(payload); } catch {}
-        if (!navigateGPTWindow(popup, targetRoom.url, payload)) {
+
+        const job = {
+          v: 2,
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          text: payload,
+          at: Date.now()
+        };
+
+        try {
+          await sharedStorage.set(HANDOFF_KEY, job);
+          const verify = await sharedStorage.get(HANDOFF_KEY, null);
+          if (!verify || verify.id !== job.id || verify.text !== job.text) {
+            throw new Error('공용 저장소 확인 실패');
+          }
+        } catch (error) {
+          try { popup.close(); } catch {}
+          toast('GPT 전달 저장소에 연결하지 못했어. 이번 한 번만 Stay 로더를 새 버전으로 바꿔 줘. 내용은 복사를 시도했어.');
+          return;
+        }
+
+        if (!navigateGPTWindow(popup, targetRoom.url, job.id)) {
+          try { await sharedStorage.del(HANDOFF_KEY); } catch {}
           try { popup.close(); } catch {}
           toast('GPT 채팅방으로 이동하지 못했어. 복사된 내용을 직접 붙여넣어 줘.');
           return;
@@ -861,22 +967,22 @@
 
         clearTransient();
         show('main');
-        toast('GPT 채팅방을 새 탭으로 열었어. 임시 대화 데이터는 정리했어.');
+        toast('GPT 채팅방을 새 탭으로 열었어. GPT가 받으면 전달용 임시 데이터도 바로 지워져.');
       }, true);
       go.disabled = !selected?.length || !confirmedPrompt;
 
       create(
         'p',
         body,
-        '대화는 가져오기 버튼을 누른 순간 화면에 렌더된 말풍선 DOM만 읽어. 제타 내부 API는 사용하지 않아. 복사 또는 GPT 가져가기가 성공하면 가져온 대화와 생성된 프롬프트 미리보기는 임시 상태에서 지워져.',
+        '대화는 가져오기 버튼을 누른 순간 화면에 렌더된 말풍선 DOM만 읽어. 제타 내부 API는 사용하지 않아. GPT 가져가기는 Stay 로더의 공용 임시 저장소를 거쳐 입력창까지만 자동으로 채우고 전송은 하지 않아. 전달 데이터는 GPT가 받는 즉시 공용 저장소에서 지워져.',
         'font-size:11px;color:#777;margin-top:12px'
       );
     }
 
     function mount() {
-      if (document.getElementById('zgm48-trigger')) return;
+      if (document.getElementById('zgm49-trigger')) return;
       const button = create('button', document.body, '서사 정리');
-      button.id = 'zgm48-trigger';
+      button.id = 'zgm49-trigger';
       button.type = 'button';
       button.onclick = () => show('main');
     }
