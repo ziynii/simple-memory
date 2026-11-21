@@ -1,7 +1,7 @@
 (() => {
   'use strict';
-  if (window.__ZGM_V49__) return;
-  window.__ZGM_V49__ = true;
+  if (window.__ZGM_V50__) return;
+  window.__ZGM_V50__ = true;
 
   const host = location.hostname;
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
@@ -9,7 +9,7 @@
   const gptSite = /(^|\.)chatgpt\.com$/.test(host) && window === window.top;
   if (!parentSite && !frameSite && !gptSite) return;
 
-  const CHANNEL = 'zgm.v49.bridge';
+  const CHANNEL = 'zgm.v50.bridge';
   const HANDOFF_HASH = 'zgmjob';
   const HANDOFF_NAME_PREFIX = '__ZGM_JOB_ID_V2__:';
   const STORAGE_REQUEST_EVENT = '__ZGM_GM_REQUEST_V1__';
@@ -18,6 +18,7 @@
   const ROOM_KEY = BASE + 'rooms';
   const HANDOFF_KEY = BASE + 'handoff-v2';
   const GPT_SESSION_KEY = BASE + 'gpt-session-v2';
+  const EARLY_JOB_SESSION_KEY = BASE + 'early-job-v1';
   const MAX_TURNS = 20;
   const MAX_MESSAGES = MAX_TURNS * 2;
   const MAX_AGE = 15 * 60 * 1000;
@@ -96,14 +97,14 @@
   };
 
   function toast(message) {
-    document.getElementById('zgm49-toast')?.remove();
+    document.getElementById('zgm50-toast')?.remove();
     const el = create(
       'div',
       document.body,
       message,
       'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#27272a;color:#fff;border-radius:12px;padding:12px 16px;max-width:90vw;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0005'
     );
-    el.id = 'zgm49-toast';
+    el.id = 'zgm50-toast';
     setTimeout(() => el.remove(), 4400);
   }
 
@@ -131,17 +132,17 @@
   }
 
   const css = `
-    #zgm49-trigger,#zgm49-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
-    #zgm49-overlay *{box-sizing:border-box}
-    #zgm49-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
-    #zgm49-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
-    #zgm49-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
-    #zgm49-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
-    #zgm49-overlay button.primary{background:#292929;color:white;border-color:#292929}
-    #zgm49-overlay button:disabled{opacity:.42;cursor:default}
-    #zgm49-overlay input,#zgm49-overlay select,#zgm49-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
-    #zgm49-overlay label{display:block;font-weight:700;margin:12px 0 6px}
-    #zgm49-overlay textarea{resize:vertical}
+    #zgm50-trigger,#zgm50-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
+    #zgm50-overlay *{box-sizing:border-box}
+    #zgm50-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
+    #zgm50-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
+    #zgm50-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
+    #zgm50-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
+    #zgm50-overlay button.primary{background:#292929;color:white;border-color:#292929}
+    #zgm50-overlay button:disabled{opacity:.42;cursor:default}
+    #zgm50-overlay input,#zgm50-overlay select,#zgm50-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
+    #zgm50-overlay label{display:block;font-weight:700;margin:12px 0 6px}
+    #zgm50-overlay textarea{resize:vertical}
   `;
   create('style', document.head || document.documentElement, css);
 
@@ -416,6 +417,16 @@
           if (name.startsWith(HANDOFF_NAME_PREFIX)) id = name.slice(HANDOFF_NAME_PREFIX.length);
         } catch {}
       }
+      // Loader v1.2가 document-start에서 hash의 작업 ID를 먼저 보존한다.
+      if (!id) {
+        try { id = sessionStorage.getItem(EARLY_JOB_SESSION_KEY) || ''; } catch {}
+      }
+      if (!id) {
+        try {
+          const sessionJob = JSON.parse(sessionStorage.getItem(GPT_SESSION_KEY) || 'null');
+          id = sessionJob?.id || '';
+        } catch {}
+      }
       return clean(id);
     }
 
@@ -423,6 +434,7 @@
       try {
         if (String(window.name || '').startsWith(HANDOFF_NAME_PREFIX)) window.name = '';
       } catch {}
+      try { sessionStorage.removeItem(EARLY_JOB_SESSION_KEY); } catch {}
       try {
         if (location.hash) history.replaceState(history.state, '', location.pathname + location.search);
       } catch {}
@@ -435,8 +447,6 @@
       try { sessionJob = JSON.parse(sessionStorage.getItem(GPT_SESSION_KEY) || 'null'); } catch {}
       if (sessionJob && (!expectedId || sessionJob.id === expectedId)) return sessionJob;
 
-      if (!expectedId) return null;
-
       let job = null;
       try {
         job = await sharedStorage.get(HANDOFF_KEY, null);
@@ -445,7 +455,15 @@
         return null;
       }
 
-      if (!job || job.id !== expectedId) return null;
+      // 보존된 ID가 있으면 반드시 같은 작업만 받는다.
+      // Safari가 hash/window.name 둘 다 정리한 경우에는, 방금 생성된 작업이 현재 GPT 방과 일치할 때만 제한적으로 복구한다.
+      if (expectedId) {
+        if (!job || job.id !== expectedId) return null;
+      } else {
+        const sameTarget = !!job?.targetPath && job.targetPath === location.pathname;
+        const fresh = !!job?.at && Date.now() - Number(job.at) < 60 * 1000;
+        if (!job || !sameTarget || !fresh) return null;
+      }
       try { sessionStorage.setItem(GPT_SESSION_KEY, JSON.stringify(job)); } catch {}
 
       // 제타↔GPT 공용 저장소에는 필요한 순간까지만 보관한다.
@@ -689,11 +707,11 @@
     }
 
     function newDialog() {
-      document.getElementById('zgm49-overlay')?.remove();
+      document.getElementById('zgm50-overlay')?.remove();
       const overlay = create('div', document.body);
-      overlay.id = 'zgm49-overlay';
+      overlay.id = 'zgm50-overlay';
       const dialog = create('div', overlay);
-      dialog.id = 'zgm49-dialog';
+      dialog.id = 'zgm50-dialog';
       overlay.onclick = event => { if (event.target === overlay) overlay.remove(); };
 
       const head = create('div', dialog, null, 'display:flex;justify-content:space-between;align-items:center;gap:8px');
@@ -871,12 +889,12 @@
       }
 
       label(body, '옵션 1 · 사용 용도');
-      radio(body, '나레이션 덮어씌우기 용도', 'zgm49-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
-      radio(body, '유저 프로필에 넣는 용도', 'zgm49-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
+      radio(body, '나레이션 덮어씌우기 용도', 'zgm50-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
+      radio(body, '유저 프로필에 넣는 용도', 'zgm50-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
 
       label(body, '옵션 2 · 정리 범위');
-      radio(body, '이전 서사와 함께 정리', 'zgm49-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
-      radio(body, '복사한 내용만 정리', 'zgm49-scope', 'only', scope === 'only', value => { scope = value; });
+      radio(body, '이전 서사와 함께 정리', 'zgm50-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
+      radio(body, '복사한 내용만 정리', 'zgm50-scope', 'only', scope === 'only', value => { scope = value; });
 
       const confirmRow = buttons(body);
       const confirmButton = btn(confirmRow, '확인', () => {
@@ -939,11 +957,15 @@
 
         try { await navigator.clipboard.writeText(payload); } catch {}
 
+        let targetPath = '';
+        try { targetPath = new URL(targetRoom.url).pathname; } catch {}
+
         const job = {
           v: 2,
           id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
           text: payload,
-          at: Date.now()
+          at: Date.now(),
+          targetPath
         };
 
         try {
@@ -980,9 +1002,9 @@
     }
 
     function mount() {
-      if (document.getElementById('zgm49-trigger')) return;
+      if (document.getElementById('zgm50-trigger')) return;
       const button = create('button', document.body, '서사 정리');
-      button.id = 'zgm49-trigger';
+      button.id = 'zgm50-trigger';
       button.type = 'button';
       button.onclick = () => show('main');
     }
