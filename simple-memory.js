@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Zeta GPT Memory V4.1 - iframe bridge + 구간 선택
+// @name         Zeta GPT Memory V4.2 - iframe bridge + 구간 선택
 // @namespace    local.zeta.gptmemory.independent
-// @version      4.1.0
+// @version      4.2.0
 // @description  제타의 화면 DOM 구간 선택(최대 20턴), GPT 방 관리, 목적별 프롬프트. 제타 내부 API 사용하지 않음.
 // @match        https://zeta-ai.io/*
 // @match        https://*.zeta-ai.io/*
@@ -9,14 +9,12 @@
 // @match        https://chatgpt.com/*
 // @run-at       document-idle
 // @all-frames   true
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_deleteValue
+// @grant        none
 // ==/UserScript==
 (() => {
   'use strict';
-  if (window.__ZGM_V41__) return;
-  window.__ZGM_V41__ = true;
+  if (window.__ZGM_V42__) return;
+  window.__ZGM_V42__ = true;
   const host = location.hostname;
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
   const frameSite = host === 'frame.pingpong.ai';
@@ -24,15 +22,17 @@
   if (!parentSite && !frameSite && !gptSite) return;
 
   const CHANNEL = 'zgm.v41.bridge';
-  const BASE = 'zgm-independent-v4-'; // V4에 저장한 방 목록과 호환
+  const BASE = 'zgm-independent-v4-'; // 기존 방 목록 키 유지
   const ROOM_KEY = BASE+'rooms', PENDING_KEY = BASE+'pending';
   const MAX_MESSAGES = 40, MAX_AGE = 15*60*1000;
   const clean = s => String(s ?? '').replace(/\u200b/g, '').trim();
   const sleep = ms => new Promise(r=>setTimeout(r,ms));
+  // External Netlify JS runs in page context: GM_* APIs are unavailable.
+  // Store room settings in the Zeta page's localStorage.
   const db = {
-    async get(k,d) { try { const v=await GM_getValue(k,d);return v??d; } catch {return d;} },
-    async set(k,v) {return GM_setValue(k,v);},
-    async del(k) {try {await GM_deleteValue(k);} catch {}}
+    async get(k,d) { try { const v=localStorage.getItem(k);return v===null?d:JSON.parse(v); } catch {return d;} },
+    async set(k,v) { localStorage.setItem(k,JSON.stringify(v)); },
+    async del(k) { localStorage.removeItem(k); }
   };
   const create = (tag,root,txt,css) => {const e=document.createElement(tag);if(txt!=null)e.textContent=txt;if(css)e.style.cssText=css;if(root)root.appendChild(e);return e;};
   function toast(msg) {
@@ -265,12 +265,16 @@
         if(!target){toast('GPT 채팅방을 먼저 선택해 줘.');return;}
         if(!selected?.length){toast('구간을 먼저 선택해 줘.');return;}
         const text=promptText();
-        try{await db.set(PENDING_KEY,JSON.stringify({id:`${Date.now()}_${Math.random().toString(36).slice(2)}`,url:target.url,text,at:Date.now()}));}
-        catch{toast('GPT 전달용 데이터 저장에 실패했어. 복사 버튼을 이용해 줘.');return;}
-        try{await navigator.clipboard.writeText(text);}catch{}
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          toast('복사 권한이 없어 이동하지 않았어. 먼저 복사 버튼을 눌러 줘.');
+          return;
+        }
+        // Cross-origin localStorage is isolated; user pastes on ChatGPT.
         location.assign(target.url);
       },true);go.disabled=!selected;
-      create('p',body,'제타에서는 선택 시 화면에 표시된 말풍선 DOM만 읽어. 이전 구간이 로드되지 않았다면 수동으로 스크롤해 줘. GPT 전송 버튼은 직접 눌러야 해.','font-size:11px;color:#777;margin-top:12px');
+      create('p',body,'제타에서는 선택 시 화면에 표시된 말풍선 DOM만 읽어. 이전 구간이 로드되지 않았다면 수동으로 스크롤해 줘. GPT에서 붙여넣기와 전송은 직접 해 줘.','font-size:11px;color:#777;margin-top:12px');
     }
     function mount(){
       if(document.getElementById('zgm41-trigger'))return;
@@ -278,33 +282,4 @@
     }
     mount();
   }
-  if(gptSite){
-    const findInput=()=>document.querySelector('#prompt-textarea[contenteditable="true"],[data-testid="prompt-textarea"][contenteditable="true"],form [contenteditable="true"][role="textbox"],form textarea');
-    function fillInput(el,text){
-      el.focus();
-      if(el instanceof HTMLTextAreaElement){
-        const set=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')?.set;
-        if(set)set.call(el,text);else el.value=text;
-        el.dispatchEvent(new Event('input',{bubbles:true}));return el.value===text;
-      }
-      const s=getSelection(),r=document.createRange();r.selectNodeContents(el);s.removeAllRanges();s.addRange(r);
-      const ok=document.execCommand('insertText',false,text);
-      el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));
-      return ok && clean(el.innerText||el.textContent)===clean(text);
-    }
-    (async()=>{
-      let p;try{p=JSON.parse(await db.get(PENDING_KEY,''));}catch{return;}
-      if(!p?.url||!p.text||!p.at||Date.now()-p.at>MAX_AGE)return;
-      if(location.origin+location.pathname.replace(/\/$/,'')!==p.url)return;
-      for(let i=0;i<25;i++){
-        const el=findInput();if(!el){await sleep(400);continue;}
-        if(clean(el.value||el.innerText||el.textContent)){toast('입력창에 기존 글이 있어 자동 입력하지 않았어.');return;}
-        if(fillInput(el,p.text)){await db.del(PENDING_KEY);toast('GPT 입력창에 채웠어! 내용 확인 후 직접 전송해 줘.');}
-        else toast('GPT 자동 입력이 막혔어. 복사된 내용을 직접 붙여넣어 줘.');
-        return;
-      }
-      toast('GPT 입력창을 찾지 못했어. 복사된 내용을 직접 붙여넣어 줘.');
-    })();
-  }
 })();
-
