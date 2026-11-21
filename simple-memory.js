@@ -1,9 +1,8 @@
 (() => {
   'use strict';
-  if (window.__ZGM_V52__) return;
-  window.__ZGM_V52__ = true;
-  window.__ZGM_REMOTE_CORE_LOADED__ = true;
-  window.__ZGM_REMOTE_CORE_VERSION__ = '5.1';
+  if (window.__ZGM_V53__) return;
+  window.__ZGM_V53__ = true;
+  window.__ZGM_REMOTE_CORE_VERSION__ = '5.3';
 
   const host = location.hostname;
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
@@ -11,7 +10,7 @@
   const gptSite = /(^|\.)chatgpt\.com$/.test(host) && window === window.top;
   if (!parentSite && !frameSite && !gptSite) return;
 
-  const CHANNEL = 'zgm.v52.bridge';
+  const CHANNEL = 'zgm.v53.bridge';
   const HANDOFF_HASH = 'zgmjob';
   const HANDOFF_NAME_PREFIX = '__ZGM_JOB_ID_V2__:';
   const STORAGE_REQUEST_EVENT = '__ZGM_GM_REQUEST_V1__';
@@ -24,6 +23,8 @@
   const MAX_TURNS = 20;
   const MAX_MESSAGES = MAX_TURNS * 2;
   const MAX_AGE = 15 * 60 * 1000;
+  const IOS_DEVICE = /iPad|iPhone|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
   const clean = s => String(s ?? '').replace(/\u200b/g, '').trim();
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -111,14 +112,14 @@
   };
 
   function toast(message) {
-    document.getElementById('zgm52-toast')?.remove();
+    document.getElementById('zgm53-toast')?.remove();
     const el = create(
       'div',
       document.body,
       message,
       'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#27272a;color:#fff;border-radius:12px;padding:12px 16px;max-width:90vw;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0005'
     );
-    el.id = 'zgm52-toast';
+    el.id = 'zgm53-toast';
     setTimeout(() => el.remove(), 4400);
   }
 
@@ -146,17 +147,17 @@
   }
 
   const css = `
-    #zgm52-trigger,#zgm52-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
-    #zgm52-overlay *{box-sizing:border-box}
-    #zgm52-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
-    #zgm52-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
-    #zgm52-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
-    #zgm52-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
-    #zgm52-overlay button.primary{background:#292929;color:white;border-color:#292929}
-    #zgm52-overlay button:disabled{opacity:.42;cursor:default}
-    #zgm52-overlay input,#zgm52-overlay select,#zgm52-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
-    #zgm52-overlay label{display:block;font-weight:700;margin:12px 0 6px}
-    #zgm52-overlay textarea{resize:vertical}
+    #zgm53-trigger,#zgm53-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
+    #zgm53-overlay *{box-sizing:border-box}
+    #zgm53-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
+    #zgm53-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
+    #zgm53-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
+    #zgm53-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
+    #zgm53-overlay button.primary{background:#292929;color:white;border-color:#292929}
+    #zgm53-overlay button:disabled{opacity:.42;cursor:default}
+    #zgm53-overlay input,#zgm53-overlay select,#zgm53-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
+    #zgm53-overlay label{display:block;font-weight:700;margin:12px 0 6px}
+    #zgm53-overlay textarea{resize:vertical}
   `;
   create('style', document.head || document.documentElement, css);
 
@@ -462,7 +463,7 @@
           if (name.startsWith(HANDOFF_NAME_PREFIX)) id = name.slice(HANDOFF_NAME_PREFIX.length);
         } catch {}
       }
-      // Loader가 document-start에서 hash의 작업 ID를 먼저 보존한다.
+      // Loader가 document-start에서 hash/window.name의 작업 ID를 먼저 보존한다.
       if (!id) {
         try { id = sessionStorage.getItem(EARLY_JOB_SESSION_KEY) || ''; } catch {}
       }
@@ -736,14 +737,27 @@
       const target = buildGPTTarget(url, jobId);
       if (!popup || !target) return false;
       try { popup.name = HANDOFF_NAME_PREFIX + jobId; } catch {}
+
+      // AUTO_KILLER와 같은 방식: iOS의 미리 연 새 탭은 href로 직접 이동시킨다.
+      // Safari에서 about:blank WindowProxy에 replace()가 불안정한 경우를 피한다.
+      if (IOS_DEVICE) {
+        try {
+          popup.location.href = target;
+          try { popup.focus(); } catch {}
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
       try {
         popup.location.replace(target);
-        popup.focus?.();
+        try { popup.focus(); } catch {}
         return true;
       } catch {
         try {
           popup.location.href = target;
-          popup.focus?.();
+          try { popup.focus(); } catch {}
           return true;
         } catch {
           return false;
@@ -752,11 +766,11 @@
     }
 
     function newDialog() {
-      document.getElementById('zgm52-overlay')?.remove();
+      document.getElementById('zgm53-overlay')?.remove();
       const overlay = create('div', document.body);
-      overlay.id = 'zgm52-overlay';
+      overlay.id = 'zgm53-overlay';
       const dialog = create('div', overlay);
-      dialog.id = 'zgm52-dialog';
+      dialog.id = 'zgm53-dialog';
       overlay.onclick = event => { if (event.target === overlay) overlay.remove(); };
 
       const head = create('div', dialog, null, 'display:flex;justify-content:space-between;align-items:center;gap:8px');
@@ -934,12 +948,12 @@
       }
 
       label(body, '옵션 1 · 사용 용도');
-      radio(body, '나레이션 덮어씌우기 용도', 'zgm52-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
-      radio(body, '유저 프로필에 넣는 용도', 'zgm52-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
+      radio(body, '나레이션 덮어씌우기 용도', 'zgm53-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
+      radio(body, '유저 프로필에 넣는 용도', 'zgm53-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
 
       label(body, '옵션 2 · 정리 범위');
-      radio(body, '이전 서사와 함께 정리', 'zgm52-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
-      radio(body, '복사한 내용만 정리', 'zgm52-scope', 'only', scope === 'only', value => { scope = value; });
+      radio(body, '이전 서사와 함께 정리', 'zgm53-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
+      radio(body, '복사한 내용만 정리', 'zgm53-scope', 'only', scope === 'only', value => { scope = value; });
 
       const confirmRow = buttons(body);
       const confirmButton = btn(confirmRow, '확인', () => {
@@ -1047,9 +1061,9 @@
     }
 
     function mount() {
-      if (document.getElementById('zgm52-trigger')) return;
+      if (document.getElementById('zgm53-trigger')) return;
       const button = create('button', document.body, '서사 정리');
-      button.id = 'zgm52-trigger';
+      button.id = 'zgm53-trigger';
       button.type = 'button';
       button.onclick = () => show('main');
     }
@@ -1057,5 +1071,8 @@
     mount();
   }
 
+  window.__ZGM_REMOTE_CORE_READY__ = true;
+  // 로더가 코어 전체 실행 완료를 확인할 수 있도록 마지막에만 신호를 올린다.
+  window.__ZGM_REMOTE_CORE_LOADED__ = true;
   window.__ZGM_REMOTE_CORE_READY__ = true;
 })();
