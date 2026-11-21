@@ -1,7 +1,9 @@
 (() => {
   'use strict';
-  if (window.__ZGM_V50__) return;
-  window.__ZGM_V50__ = true;
+  if (window.__ZGM_V51__) return;
+  window.__ZGM_V51__ = true;
+  window.__ZGM_REMOTE_CORE_LOADED__ = true;
+  window.__ZGM_REMOTE_CORE_VERSION__ = '5.1';
 
   const host = location.hostname;
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
@@ -9,7 +11,7 @@
   const gptSite = /(^|\.)chatgpt\.com$/.test(host) && window === window.top;
   if (!parentSite && !frameSite && !gptSite) return;
 
-  const CHANNEL = 'zgm.v50.bridge';
+  const CHANNEL = 'zgm.v51.bridge';
   const HANDOFF_HASH = 'zgmjob';
   const HANDOFF_NAME_PREFIX = '__ZGM_JOB_ID_V2__:';
   const STORAGE_REQUEST_EVENT = '__ZGM_GM_REQUEST_V1__';
@@ -51,7 +53,19 @@
     });
   }
 
-  const sharedStorage = {
+  // GM API가 코어에 직접 전달된 경우에는 그 경로를 우선 사용한다.
+  // iOS Stay에서 userscript/page 컨텍스트 사이 CustomEvent 전달이 불안정해도
+  // 제타와 ChatGPT가 같은 userscript의 GM 저장소를 직접 공유할 수 있다.
+  const directGm = typeof GM === 'object' && GM &&
+    typeof GM.setValue === 'function' &&
+    typeof GM.getValue === 'function' &&
+    typeof GM.deleteValue === 'function';
+
+  const sharedStorage = directGm ? {
+    set: (key, value) => GM.setValue(key, value),
+    get: (key, fallback) => GM.getValue(key, fallback),
+    del: key => GM.deleteValue(key)
+  } : {
     set: (key, value) => storageBridgeRequest('set', key, value, null),
     get: (key, fallback) => storageBridgeRequest('get', key, null, fallback),
     del: key => storageBridgeRequest('delete', key, null, null)
@@ -97,14 +111,14 @@
   };
 
   function toast(message) {
-    document.getElementById('zgm50-toast')?.remove();
+    document.getElementById('zgm51-toast')?.remove();
     const el = create(
       'div',
       document.body,
       message,
       'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#27272a;color:#fff;border-radius:12px;padding:12px 16px;max-width:90vw;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0005'
     );
-    el.id = 'zgm50-toast';
+    el.id = 'zgm51-toast';
     setTimeout(() => el.remove(), 4400);
   }
 
@@ -132,17 +146,17 @@
   }
 
   const css = `
-    #zgm50-trigger,#zgm50-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
-    #zgm50-overlay *{box-sizing:border-box}
-    #zgm50-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
-    #zgm50-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
-    #zgm50-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
-    #zgm50-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
-    #zgm50-overlay button.primary{background:#292929;color:white;border-color:#292929}
-    #zgm50-overlay button:disabled{opacity:.42;cursor:default}
-    #zgm50-overlay input,#zgm50-overlay select,#zgm50-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
-    #zgm50-overlay label{display:block;font-weight:700;margin:12px 0 6px}
-    #zgm50-overlay textarea{resize:vertical}
+    #zgm51-trigger,#zgm51-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
+    #zgm51-overlay *{box-sizing:border-box}
+    #zgm51-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
+    #zgm51-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
+    #zgm51-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
+    #zgm51-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
+    #zgm51-overlay button.primary{background:#292929;color:white;border-color:#292929}
+    #zgm51-overlay button:disabled{opacity:.42;cursor:default}
+    #zgm51-overlay input,#zgm51-overlay select,#zgm51-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
+    #zgm51-overlay label{display:block;font-weight:700;margin:12px 0 6px}
+    #zgm51-overlay textarea{resize:vertical}
   `;
   create('style', document.head || document.documentElement, css);
 
@@ -281,6 +295,13 @@
   // 현재 로더 구조에서는 ChatGPT 측 Netlify JS 실행 여부에 따라 자동입력이 실패할 수 있다.
   // ---------------------------------------------------------------------------
   if (gptSite) {
+    try {
+      const hasMarker = /(?:^#|[&#])zgmjob=/.test(String(location.hash || '')) ||
+        !!sessionStorage.getItem(EARLY_JOB_SESSION_KEY) ||
+        String(window.name || '').startsWith(HANDOFF_NAME_PREFIX);
+      if (hasMarker) setTimeout(() => toast('Zeta GPT Memory 연결을 확인하는 중…'), 50);
+    } catch {}
+
     function visible(el) {
       if (!el?.isConnected || el.disabled || el.getAttribute?.('aria-disabled') === 'true' || el.getAttribute?.('contenteditable') === 'false') return false;
       try {
@@ -707,11 +728,11 @@
     }
 
     function newDialog() {
-      document.getElementById('zgm50-overlay')?.remove();
+      document.getElementById('zgm51-overlay')?.remove();
       const overlay = create('div', document.body);
-      overlay.id = 'zgm50-overlay';
+      overlay.id = 'zgm51-overlay';
       const dialog = create('div', overlay);
-      dialog.id = 'zgm50-dialog';
+      dialog.id = 'zgm51-dialog';
       overlay.onclick = event => { if (event.target === overlay) overlay.remove(); };
 
       const head = create('div', dialog, null, 'display:flex;justify-content:space-between;align-items:center;gap:8px');
@@ -889,12 +910,12 @@
       }
 
       label(body, '옵션 1 · 사용 용도');
-      radio(body, '나레이션 덮어씌우기 용도', 'zgm50-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
-      radio(body, '유저 프로필에 넣는 용도', 'zgm50-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
+      radio(body, '나레이션 덮어씌우기 용도', 'zgm51-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
+      radio(body, '유저 프로필에 넣는 용도', 'zgm51-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
 
       label(body, '옵션 2 · 정리 범위');
-      radio(body, '이전 서사와 함께 정리', 'zgm50-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
-      radio(body, '복사한 내용만 정리', 'zgm50-scope', 'only', scope === 'only', value => { scope = value; });
+      radio(body, '이전 서사와 함께 정리', 'zgm51-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
+      radio(body, '복사한 내용만 정리', 'zgm51-scope', 'only', scope === 'only', value => { scope = value; });
 
       const confirmRow = buttons(body);
       const confirmButton = btn(confirmRow, '확인', () => {
@@ -1002,13 +1023,15 @@
     }
 
     function mount() {
-      if (document.getElementById('zgm50-trigger')) return;
+      if (document.getElementById('zgm51-trigger')) return;
       const button = create('button', document.body, '서사 정리');
-      button.id = 'zgm50-trigger';
+      button.id = 'zgm51-trigger';
       button.type = 'button';
       button.onclick = () => show('main');
     }
 
     mount();
   }
+
+  window.__ZGM_REMOTE_CORE_READY__ = true;
 })();
