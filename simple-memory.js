@@ -1,299 +1,285 @@
 (() => {
   'use strict';
-  if (window.__ZGM_V47__) return;
-  window.__ZGM_V47__ = true;
+  if (window.__ZGM_V48__) return;
+  window.__ZGM_V48__ = true;
+
   const host = location.hostname;
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
   const frameSite = host === 'frame.pingpong.ai';
   const gptSite = host === 'chatgpt.com' && window === window.top;
   if (!parentSite && !frameSite && !gptSite) return;
 
-  const CHANNEL = 'zgm.v41.bridge';
+  const CHANNEL = 'zgm.v48.bridge';
   const HANDOFF_HASH = 'zgmjob';
   const HANDOFF_NAME_PREFIX = '__ZGM_HANDOFF_V1__:';
-  const BASE = 'zgm-independent-v4-'; // 기존 방 목록 키 유지
-  const ROOM_KEY = BASE+'rooms', PENDING_KEY = BASE+'pending';
-  const MAX_MESSAGES = 40, MAX_AGE = 15*60*1000;
+  const BASE = 'zgm-independent-v4-';
+  const ROOM_KEY = BASE + 'rooms';
+  const MAX_TURNS = 20;
+  const MAX_MESSAGES = MAX_TURNS * 2;
+  const MAX_AGE = 15 * 60 * 1000;
+
   const clean = s => String(s ?? '').replace(/\u200b/g, '').trim();
-  const sleep = ms => new Promise(r=>setTimeout(r,ms));
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
   function encodeTransfer(value) {
     const bytes = new TextEncoder().encode(JSON.stringify(value));
     let binary = '';
     bytes.forEach(byte => { binary += String.fromCharCode(byte); });
-    return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   }
+
   function decodeTransfer(value) {
     try {
-      const base64=String(value||'').replace(/-/g,'+').replace(/_/g,'/');
-      const binary=atob(base64+'='.repeat((4-base64.length%4)%4));
-      const bytes=Uint8Array.from(binary,ch=>ch.charCodeAt(0));
+      const base64 = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+      const binary = atob(base64 + '='.repeat((4 - base64.length % 4) % 4));
+      const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
       return JSON.parse(new TextDecoder().decode(bytes));
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
-  // External Netlify JS runs in page context: GM_* APIs are unavailable.
-  // Store room settings in the Zeta page's localStorage.
+
+  // Netlify 외부 JS는 페이지 컨텍스트에서 실행된다.
+  // 방 설정만 각 사이트의 localStorage에 저장하고, 대화 원문은 저장하지 않는다.
   const db = {
-    async get(k,d) { try { const v=localStorage.getItem(k);return v===null?d:JSON.parse(v); } catch {return d;} },
-    async set(k,v) { localStorage.setItem(k,JSON.stringify(v)); },
-    async del(k) { localStorage.removeItem(k); }
+    async get(key, fallback) {
+      try {
+        const value = localStorage.getItem(key);
+        return value === null ? fallback : JSON.parse(value);
+      } catch {
+        return fallback;
+      }
+    },
+    async set(key, value) {
+      localStorage.setItem(key, JSON.stringify(value));
+    },
+    async del(key) {
+      localStorage.removeItem(key);
+    }
   };
-  const create = (tag,root,txt,css) => {const e=document.createElement(tag);if(txt!=null)e.textContent=txt;if(css)e.style.cssText=css;if(root)root.appendChild(e);return e;};
-  function toast(msg) {
-    document.getElementById('zgm41-toast')?.remove();
-    const t=create('div',document.body,msg,'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#27272a;color:#fff;border-radius:12px;padding:12px 16px;max-width:90vw;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0005');
-    t.id='zgm41-toast';setTimeout(()=>t.remove(),4400);
+
+  const create = (tag, root, text, css) => {
+    const el = document.createElement(tag);
+    if (text != null) el.textContent = text;
+    if (css) el.style.cssText = css;
+    if (root) root.appendChild(el);
+    return el;
+  };
+
+  function toast(message) {
+    document.getElementById('zgm48-toast')?.remove();
+    const el = create(
+      'div',
+      document.body,
+      message,
+      'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#27272a;color:#fff;border-radius:12px;padding:12px 16px;max-width:90vw;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0005'
+    );
+    el.id = 'zgm48-toast';
+    setTimeout(() => el.remove(), 4400);
   }
+
   function validURL(value) {
     try {
-      const u=new URL(clean(value));
-      if(u.origin!=='https://chatgpt.com')return '';
-      if(!/^\/c\/[^/]+\/?$/.test(u.pathname) && !/^\/g\/[^/]+\/c\/[^/]+\/?$/.test(u.pathname))return '';
-      return u.origin+u.pathname.replace(/\/$/,'');
-    } catch {return '';}
-  }
-  async function rooms() {
-    let r=await db.get(ROOM_KEY,[]);
-    if(typeof r==='string'){try{r=JSON.parse(r);}catch{r=[];}}
-    return Array.isArray(r)?r.filter(x=>x&&clean(x.name)&&validURL(x.url)).map(x=>({id:String(x.id),name:clean(x.name),url:validURL(x.url)})):[];
-  }
-  const css=`
-  #zgm41-trigger,#zgm41-overlay,#zgm41-pickbar{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
-  #zgm41-overlay *,#zgm41-pickbar *{box-sizing:border-box}
-  #zgm41-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
-  #zgm41-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
-  #zgm41-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
-  #zgm41-overlay button,#zgm41-pickbar button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
-  #zgm41-overlay button.primary,#zgm41-pickbar button.primary{background:#292929;color:white;border-color:#292929}
-  #zgm41-overlay button:disabled{opacity:.42;cursor:default}
-  #zgm41-overlay input,#zgm41-overlay select,#zgm41-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
-  #zgm41-overlay label{display:block;font-weight:700;margin:12px 0 6px}
-  #zgm41-pickbar{position:fixed;top:calc(12px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:2147483640;background:#282828;color:#fff;padding:10px;border-radius:14px;max-width:95vw;display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;box-shadow:0 6px 24px #0008}
-  [data-zgm41-mark='start']{outline:3px solid #5caafa!important;outline-offset:2px!important}
-  [data-zgm41-mark='end']{outline:3px solid #f6ae53!important;outline-offset:2px!important}
-  [data-zgm41-mark='between']{outline:2px solid #72c9a3!important;outline-offset:2px!important}
-  `;
-  create('style',document.head,css);
-
-  // iframe: rendered message DOM only, and only during explicit selection.
-  if(frameSite) {
-    let picking=false, entries=[], first=null, bar=null, pointerStart=null, lastPointerHandled=0;
-    const log=()=>document.querySelector('[role="log"][aria-label="Chat messages"]')||document.querySelector('[role="log"]');
-
-    function isBubbleShape(el){
-      if(!(el instanceof Element))return false;
-      const c=el.classList;
-      const userShape=c.contains('rounded-l-xl')&&c.contains('rounded-br-xl');
-      const charShape=c.contains('rounded-r-xl')&&c.contains('rounded-bl-xl');
-      const aligned=(c.contains('self-end')||c.contains('self-start')) &&
-        (c.contains('w-fit')||c.contains('px-3')||c.contains('py-2'));
-      return userShape||charShape||aligned;
+      const url = new URL(clean(value));
+      if (url.origin !== 'https://chatgpt.com') return '';
+      if (!/^\/c\/[^/]+\/?$/.test(url.pathname) && !/^\/g\/[^/]+\/c\/[^/]+\/?$/.test(url.pathname)) return '';
+      return url.origin + url.pathname.replace(/\/$/, '');
+    } catch {
+      return '';
     }
-    function roleForBubble(el){
-      const c=el.classList;
-      if(c.contains('self-end')||c.contains('rounded-l-xl'))return 'user';
-      if(c.contains('self-start')||c.contains('rounded-r-xl'))return 'character';
-      const row=el.closest('div.flex.flex-row.items-start');
-      if(row?.classList.contains('ml-auto')||row?.classList.contains('pl-[72px]'))return 'user';
+  }
+
+  async function rooms() {
+    let list = await db.get(ROOM_KEY, []);
+    if (typeof list === 'string') {
+      try { list = JSON.parse(list); } catch { list = []; }
+    }
+    return Array.isArray(list)
+      ? list
+          .filter(item => item && clean(item.name) && validURL(item.url))
+          .map(item => ({ id: String(item.id), name: clean(item.name), url: validURL(item.url) }))
+      : [];
+  }
+
+  const css = `
+    #zgm48-trigger,#zgm48-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
+    #zgm48-overlay *{box-sizing:border-box}
+    #zgm48-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
+    #zgm48-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
+    #zgm48-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
+    #zgm48-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
+    #zgm48-overlay button.primary{background:#292929;color:white;border-color:#292929}
+    #zgm48-overlay button:disabled{opacity:.42;cursor:default}
+    #zgm48-overlay input,#zgm48-overlay select,#zgm48-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
+    #zgm48-overlay label{display:block;font-weight:700;margin:12px 0 6px}
+    #zgm48-overlay textarea{resize:vertical}
+  `;
+  create('style', document.head || document.documentElement, css);
+
+  // ---------------------------------------------------------------------------
+  // Zeta iframe: 사용자가 '가져오기'를 눌렀을 때만 현재 렌더된 말풍선 DOM을 읽는다.
+  // ---------------------------------------------------------------------------
+  if (frameSite) {
+    const log = () =>
+      document.querySelector('[role="log"][aria-label="Chat messages"]') ||
+      document.querySelector('[role="log"]');
+
+    function isBubbleShape(el) {
+      if (!(el instanceof Element)) return false;
+      const c = el.classList;
+      const userShape = c.contains('rounded-l-xl') && c.contains('rounded-br-xl');
+      const charShape = c.contains('rounded-r-xl') && c.contains('rounded-bl-xl');
+      const aligned = (c.contains('self-end') || c.contains('self-start')) &&
+        (c.contains('w-fit') || c.contains('px-3') || c.contains('py-2'));
+      return userShape || charShape || aligned;
+    }
+
+    function roleForBubble(el) {
+      const c = el.classList;
+      if (c.contains('self-end') || c.contains('rounded-l-xl')) return 'user';
+      if (c.contains('self-start') || c.contains('rounded-r-xl')) return 'character';
+      const row = el.closest('div.flex.flex-row.items-start');
+      if (row?.classList.contains('ml-auto') || row?.classList.contains('pl-[72px]')) return 'user';
       return 'character';
     }
-    function rowForBubble(el,root){
-      let row=el.parentElement;
-      while(row&&row!==root){
-        if(row.classList?.contains('flex-row')&&row.classList?.contains('items-start'))return row;
-        row=row.parentElement;
+
+    function rowForBubble(el, root) {
+      let row = el.parentElement;
+      while (row && row !== root) {
+        if (row.classList?.contains('flex-row') && row.classList?.contains('items-start')) return row;
+        row = row.parentElement;
       }
-      return el.parentElement||el;
+      return el.parentElement || el;
     }
-    function textFromBubble(bubble){
-      const clone=bubble.cloneNode(true);
-      clone.querySelectorAll('button,svg,script,style,select,textarea,input,[aria-hidden="true"]').forEach(e=>e.remove());
-      return clean(clone.innerText||clone.textContent).replace(/\n{3,}/g,'\n\n');
+
+    function textFromBubble(bubble) {
+      const clone = bubble.cloneNode(true);
+      clone.querySelectorAll('button,svg,script,style,select,textarea,input,[aria-hidden="true"],.message-context-menu-trigger').forEach(el => el.remove());
+      return clean(clone.innerText || clone.textContent).replace(/\n{3,}/g, '\n\n');
     }
-    function speakerFromBubble(bubble,text){
-      const clone=bubble.cloneNode(true);
-      clone.querySelectorAll('button,svg,script,style,select,textarea,input,[aria-hidden="true"]').forEach(e=>e.remove());
-      const leaf=[...clone.querySelectorAll('*')].find(el=>{
-        const value=clean(el.textContent);
-        return el.children.length===0 &&
+
+    function speakerFromBubble(bubble, text) {
+      const clone = bubble.cloneNode(true);
+      clone.querySelectorAll('button,svg,script,style,select,textarea,input,[aria-hidden="true"],.message-context-menu-trigger').forEach(el => el.remove());
+      const leaf = [...clone.querySelectorAll('*')].find(el => {
+        const value = clean(el.textContent);
+        return el.children.length === 0 &&
           /^[가-힣A-Za-z][가-힣A-Za-z0-9 _.-]{0,19}$/.test(value) &&
-          text.startsWith(value) && text.length>value.length;
+          text.startsWith(value) && text.length > value.length;
       });
-      return leaf?clean(leaf.textContent):'';
+      return leaf ? clean(leaf.textContent) : '';
     }
-    function getEntries(){
-      const root=log();if(!root)return [];
-      const all=[...root.querySelectorAll('div')];
-      const strong=all.filter(el=>{
-        const c=el.classList;
-        return (c.contains('rounded-l-xl')&&c.contains('rounded-br-xl')) ||
-          (c.contains('rounded-r-xl')&&c.contains('rounded-bl-xl'));
+
+    function getEntries() {
+      const root = log();
+      if (!root) return [];
+
+      const all = [...root.querySelectorAll('div')];
+      const strong = all.filter(el => {
+        const c = el.classList;
+        return (c.contains('rounded-l-xl') && c.contains('rounded-br-xl')) ||
+          (c.contains('rounded-r-xl') && c.contains('rounded-bl-xl'));
       });
-      const weak=all.filter(el=>isBubbleShape(el) && !strong.some(s=>s===el||s.contains(el)||el.contains(s)));
-      const bubbles=[...strong,...weak];
-      const seen=new Set(), arr=[];
-      for(const bubble of bubbles){
-        if(seen.has(bubble))continue;
-        const role=roleForBubble(bubble);
-        const row=rowForBubble(bubble,root);
-        const text=textFromBubble(bubble);
-        if(!text||text.length>24000)continue;
+      const weak = all.filter(el =>
+        isBubbleShape(el) && !strong.some(strongEl => strongEl === el || strongEl.contains(el) || el.contains(strongEl))
+      );
+
+      const bubbles = [...strong, ...weak];
+      const seen = new Set();
+      const entries = [];
+
+      for (const bubble of bubbles) {
+        if (seen.has(bubble)) continue;
+        const role = roleForBubble(bubble);
+        const row = rowForBubble(bubble, root);
+        const text = textFromBubble(bubble);
+        if (!text || text.length > 24000) continue;
         seen.add(bubble);
-        arr.push({row,bubble,role,text,speaker:speakerFromBubble(bubble,text)});
+        entries.push({ row, bubble, role, text, speaker: speakerFromBubble(bubble, text) });
       }
-      // Sort by the messages' actual visual positions. Zeta's chat stack uses
-      // flex-col-reverse, but its DOM order is not a reliable chronology signal.
-      // Visual top -> bottom is exactly the order the user sees/selects.
-      arr.sort((a,b)=>{
-        const ar=a.row?.getBoundingClientRect?.()||a.bubble.getBoundingClientRect();
-        const br=b.row?.getBoundingClientRect?.()||b.bubble.getBoundingClientRect();
-        const dy=(ar?.top||0)-(br?.top||0);
-        if(Math.abs(dy)>1)return dy;
-        const ax=ar?.left||0,bx=br?.left||0;
-        if(Math.abs(ax-bx)>1)return ax-bx;
-        const pos=a.bubble.compareDocumentPosition(b.bubble);
-        return pos&Node.DOCUMENT_POSITION_FOLLOWING?-1:1;
+
+      // 실제 화면에서 위 -> 아래 순서로 정렬한다.
+      entries.sort((a, b) => {
+        const ar = a.row?.getBoundingClientRect?.() || a.bubble.getBoundingClientRect();
+        const br = b.row?.getBoundingClientRect?.() || b.bubble.getBoundingClientRect();
+        const dy = (ar?.top || 0) - (br?.top || 0);
+        if (Math.abs(dy) > 1) return dy;
+        const pos = a.bubble.compareDocumentPosition(b.bubble);
+        return pos & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
       });
-      return arr;
-    }
-    function entryIndexFromEvent(event,current){
-      const path=typeof event.composedPath==='function'?event.composedPath():[];
-      const candidates=[...path,event.target].filter(x=>x instanceof Element);
-      return current.findIndex(({row,bubble})=>candidates.some(x=>
-        x===bubble||bubble.contains(x)||x===row||row.contains(x)
-      ));
-    }
-    function findFirstIndex(current){
-      if(!first)return -1;
-      let i=current.findIndex(e=>e.bubble===first.bubble);
-      if(i>=0)return i;
-      const matches=[];
-      current.forEach((e,index)=>{if(e.role===first.role&&e.text===first.text)matches.push(index);});
-      return matches.length?matches[0]:-1;
-    }
-    const clearMarks=()=>document.querySelectorAll('[data-zgm41-mark]').forEach(e=>e.removeAttribute('data-zgm41-mark'));
-    function mark(list,a,b){
-      clearMarks();
-      const lo=Math.min(a,b),hi=Math.max(a,b);
-      list.slice(lo,hi+1).forEach((e,i)=>e.bubble.setAttribute('data-zgm41-mark',i===0?'start':i===hi-lo?'end':'between'));
-    }
-    const send=(kind,more={})=>{
-      let origin='https://zeta-ai.io';
-      try { if(document.referrer) origin=new URL(document.referrer).origin; } catch {}
-      if(!/^https:\/\/(?:[^/]+\.)?zeta-ai\.io$/.test(origin))return;
-      window.parent.postMessage({channel:CHANNEL,kind,...more},origin);
-    };
-    function cancelSelection(notify=true){
-      document.removeEventListener('pointerdown',onPointerDown,true);
-      document.removeEventListener('pointerup',onPointerUp,true);
-      document.removeEventListener('click',onClick,true);
-      picking=false;first=null;pointerStart=null;
-      bar?.remove();bar=null;
-      if(notify){clearMarks();send('cancel');}
-    }
-    function handleTap(e){
-      if(!picking)return false;
-      const current=getEntries();
-      const index=entryIndexFromEvent(e,current);
-      if(index<0)return false;
-      e.preventDefault?.();e.stopPropagation?.();e.stopImmediatePropagation?.();
 
-      if(first==null){
-        const picked=current[index];
-        first={bubble:picked.bubble,role:picked.role,text:picked.text};
-        entries=current;mark(current,index,index);
-        const status=bar?.querySelector('[data-status]');
-        if(status)status.textContent='끝 말풍선을 선택해 줘';
-        return true;
-      }
+      return entries;
+    }
 
-      const firstIndex=findFirstIndex(current);
-      if(firstIndex<0){
-        const status=bar?.querySelector('[data-status]');
-        if(status)status.textContent='시작 말풍선이 현재 화면에서 벗어났어. 시작 지점이 보이게 한 뒤 다시 선택해 줘.';
-        clearMarks();first=null;
-        return true;
-      }
+    function send(kind, extra = {}) {
+      let origin = 'https://zeta-ai.io';
+      try {
+        if (document.referrer) origin = new URL(document.referrer).origin;
+      } catch {}
+      if (!/^https:\/\/(?:[^/]+\.)?zeta-ai\.io$/.test(origin)) return;
+      window.parent.postMessage({ channel: CHANNEL, kind, ...extra }, origin);
+    }
 
-      const lo=Math.min(firstIndex,index),hi=Math.max(firstIndex,index),slice=current.slice(lo,hi+1);
-      if(slice.length>MAX_MESSAGES){
-        const status=bar?.querySelector('[data-status]');
-        if(status)status.textContent=`약 ${Math.ceil(slice.length/2)}턴 · 최대 20턴까지 선택할 수 있어`;
-        return true;
-      }
-      entries=current;mark(current,lo,hi);
-      cancelSelection(false);
-      send('selected',{
-        messages:slice.map(m=>({role:m.role,text:m.text,speaker:m.speaker})),
-        count:Math.ceil(slice.length/2)
-      });
-      return true;
-    }
-    function onPointerDown(e){
-      if(!picking||e.isPrimary===false)return;
-      pointerStart={x:e.clientX,y:e.clientY,id:e.pointerId};
-    }
-    function onPointerUp(e){
-      if(!picking||e.isPrimary===false||!pointerStart)return;
-      const dx=e.clientX-pointerStart.x,dy=e.clientY-pointerStart.y;
-      const moved=Math.hypot(dx,dy);
-      pointerStart=null;
-      if(moved>12)return; // scrolling/dragging: do not treat it as a selection tap.
-      if(handleTap(e))lastPointerHandled=Date.now();
-    }
-    function onClick(e){
-      if(Date.now()-lastPointerHandled<450)return;
-      handleTap(e);
-    }
-    function begin(){
-      cancelSelection(false);clearMarks();entries=getEntries();first=null;
-      if(!entries.length){
-        send('error',{message:'iframe은 연결됐지만 현재 화면의 말풍선 DOM을 찾지 못했어. 채팅 화면을 조금 움직인 뒤 다시 시도해 줘.'});
+    function collectRecent(turns) {
+      const requested = Math.max(1, Math.min(MAX_TURNS, Number.parseInt(turns, 10) || 10));
+      const entries = getEntries();
+      if (!entries.length) {
+        send('error', { message: '현재 화면에서 말풍선 DOM을 찾지 못했어. 채팅 화면을 조금 움직인 뒤 다시 시도해 줘.' });
         return;
       }
-      picking=true;bar=create('div',document.body);bar.id='zgm41-pickbar';
-      const status=create('span',bar,`시작 말풍선을 선택해 줘 · 현재 인식 ${entries.length}개`);status.dataset.status='1';
-      const btn=create('button',bar,'선택 취소');btn.onclick=()=>cancelSelection(true);
-      document.addEventListener('pointerdown',onPointerDown,true);
-      document.addEventListener('pointerup',onPointerUp,true);
-      document.addEventListener('click',onClick,true);
-      send('ready',{available:entries.length});
+
+      const wantedMessages = requested * 2;
+      const slice = entries.slice(-wantedMessages);
+      send('collected', {
+        requestedTurns: requested,
+        availableTurns: Math.ceil(entries.length / 2),
+        messages: slice.map(item => ({ role: item.role, text: item.text, speaker: item.speaker }))
+      });
     }
-    window.addEventListener('message',e=>{
-      if(e.source!==window.parent || !/^https:\/\/(?:[^/]+\.)?zeta-ai\.io$/.test(e.origin))return;
-      if(e.data?.channel!==CHANNEL)return;
-      if(e.data.kind==='begin')begin();
-      if(e.data.kind==='clear'){cancelSelection(false);clearMarks();}
+
+    window.addEventListener('message', event => {
+      if (event.source !== window.parent || !/^https:\/\/(?:[^/]+\.)?zeta-ai\.io$/.test(event.origin)) return;
+      if (event.data?.channel !== CHANNEL) return;
+      if (event.data.kind === 'collect') collectRecent(event.data.turns);
     });
+
     send('frame-ready');
   }
 
-  if(gptSite){
-    function visible(el){
-      if(!el?.isConnected||el.disabled||el.getAttribute?.('aria-disabled')==='true'||el.getAttribute?.('contenteditable')==='false')return false;
-      try{
-        const s=getComputedStyle(el),r=el.getBoundingClientRect();
-        if(s.display==='none'||s.visibility==='hidden'||Number.parseFloat(s.opacity||'1')===0)return false;
-        if(r.width<2&&r.height<2)return false;
-      }catch{}
+  // ---------------------------------------------------------------------------
+  // ChatGPT: 전달받은 프롬프트를 입력창에 채우기만 한다. 자동 전송은 하지 않는다.
+  // 현재 로더 구조에서는 ChatGPT 측 Netlify JS 실행 여부에 따라 자동입력이 실패할 수 있다.
+  // ---------------------------------------------------------------------------
+  if (gptSite) {
+    function visible(el) {
+      if (!el?.isConnected || el.disabled || el.getAttribute?.('aria-disabled') === 'true' || el.getAttribute?.('contenteditable') === 'false') return false;
+      try {
+        const style = getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        if (style.display === 'none' || style.visibility === 'hidden' || Number.parseFloat(style.opacity || '1') === 0) return false;
+        if (rect.width < 2 && rect.height < 2) return false;
+      } catch {}
       return true;
     }
-    function scorePrompt(el){
-      if(!visible(el))return -Infinity;
-      if(el.closest?.('[data-writing-block="true"],[data-message-author-role],[data-turn]'))return -Infinity;
-      let s=0;
-      if(el.id==='prompt-textarea')s+=120;
-      const tid=el.getAttribute?.('data-testid')||'';
-      if(tid==='prompt-textarea')s+=115;
-      if(/composer.*(?:input|text)|(?:input|text).*composer/i.test(tid))s+=100;
-      if(el.matches?.('.ProseMirror[contenteditable="true"]'))s+=90;
-      if(el.matches?.('[contenteditable="true"][role="textbox"]'))s+=85;
-      if(el.matches?.('textarea[name="prompt-textarea"]'))s+=80;
-      if(el.matches?.('textarea'))s+=35;
-      if(el.closest?.('form'))s+=20;
-      return s;
+
+    function scorePrompt(el) {
+      if (!visible(el)) return -Infinity;
+      if (el.closest?.('[data-writing-block="true"],[data-message-author-role],[data-turn]')) return -Infinity;
+      let score = 0;
+      if (el.id === 'prompt-textarea') score += 120;
+      const testId = el.getAttribute?.('data-testid') || '';
+      if (testId === 'prompt-textarea') score += 115;
+      if (/composer.*(?:input|text)|(?:input|text).*composer/i.test(testId)) score += 100;
+      if (el.matches?.('.ProseMirror[contenteditable="true"]')) score += 90;
+      if (el.matches?.('[contenteditable="true"][role="textbox"]')) score += 85;
+      if (el.matches?.('textarea[name="prompt-textarea"]')) score += 80;
+      if (el.matches?.('textarea')) score += 35;
+      if (el.closest?.('form')) score += 20;
+      return score;
     }
-    function findPrompt(){
-      const selectors=[
+
+    function findPrompt() {
+      const selectors = [
         '#prompt-textarea',
         '[data-testid="prompt-textarea"]',
         '[data-testid="composer-input"][contenteditable="true"]',
@@ -304,318 +290,597 @@
         '[contenteditable="plaintext-only"][role="textbox"]',
         'textarea[name="prompt-textarea"]'
       ];
-      const seen=new Set(),all=[];
-      for(const selector of selectors){
-        try{
-          document.querySelectorAll(selector).forEach(el=>{if(!seen.has(el)){seen.add(el);all.push(el);}});
-        }catch{}
+      const seen = new Set();
+      const candidates = [];
+      for (const selector of selectors) {
+        try {
+          document.querySelectorAll(selector).forEach(el => {
+            if (!seen.has(el)) {
+              seen.add(el);
+              candidates.push(el);
+            }
+          });
+        } catch {}
       }
-      all.sort((a,b)=>scorePrompt(b)-scorePrompt(a));
-      return all.find(el=>Number.isFinite(scorePrompt(el)))||null;
+      candidates.sort((a, b) => scorePrompt(b) - scorePrompt(a));
+      return candidates.find(el => Number.isFinite(scorePrompt(el))) || null;
     }
-    function editableText(el){
-      if(!el)return '';
-      if('value' in el&&typeof el.value==='string')return el.value;
-      return el.innerText||el.textContent||'';
+
+    function editableText(el) {
+      if (!el) return '';
+      if ('value' in el && typeof el.value === 'string') return el.value;
+      return el.innerText || el.textContent || '';
     }
-    function dispatchInput(el,text){
-      try{el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));}
-      catch{el.dispatchEvent(new Event('input',{bubbles:true}));}
+
+    function dispatchInput(el, text) {
+      try {
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+      } catch {
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
     }
-    async function insertPrompt(el,text){
+
+    async function insertPrompt(el, text) {
       el.focus();
-      if('value' in el&&typeof el.value==='string'){
-        const proto=Object.getPrototypeOf(el);
-        const setter=Object.getOwnPropertyDescriptor(proto,'value')?.set;
-        if(setter)setter.call(el,text);else el.value=text;
-        dispatchInput(el,text);
-        el.dispatchEvent(new Event('change',{bubbles:true}));
+
+      if ('value' in el && typeof el.value === 'string') {
+        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
+        if (setter) setter.call(el, text);
+        else el.value = text;
+        dispatchInput(el, text);
+        el.dispatchEvent(new Event('change', { bubbles: true }));
         await sleep(100);
-        return editableText(el).trim().length>0;
+        return editableText(el).trim().length > 0;
       }
-      try{
-        const sel=window.getSelection?.();
-        if(sel){
-          const range=document.createRange();
-          range.selectNodeContents(el);range.collapse(false);
-          sel.removeAllRanges();sel.addRange(range);
+
+      try {
+        const selection = window.getSelection?.();
+        if (selection) {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
         }
-        if(document.execCommand('insertText',false,text)){
-          dispatchInput(el,text);await sleep(120);
-          if(editableText(el).trim())return true;
+        if (document.execCommand('insertText', false, text)) {
+          dispatchInput(el, text);
+          await sleep(120);
+          if (editableText(el).trim()) return true;
         }
-      }catch{}
-      try{
+      } catch {}
+
+      try {
         el.replaceChildren();
-        String(text).split('\n').forEach(line=>{
-          const p=document.createElement('p');
-          if(line)p.textContent=line;else p.append(document.createElement('br'));
+        String(text).split('\n').forEach(line => {
+          const p = document.createElement('p');
+          if (line) p.textContent = line;
+          else p.append(document.createElement('br'));
           el.append(p);
         });
-        const sel=window.getSelection?.();
-        if(sel&&el.lastChild){
-          const range=document.createRange();
-          range.selectNodeContents(el.lastChild);range.collapse(false);
-          sel.removeAllRanges();sel.addRange(range);
+        const selection = window.getSelection?.();
+        if (selection && el.lastChild) {
+          const range = document.createRange();
+          range.selectNodeContents(el.lastChild);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
         }
-        dispatchInput(el,text);
+        dispatchInput(el, text);
         await sleep(150);
-        return editableText(el).trim().length>0;
-      }catch{return false;}
-    }
-    let handoffConsumed=false;
-    async function consumeHandoff(){
-      if(handoffConsumed)return false;
-      let raw='';
-      const hash=String(location.hash||'').replace(/^#/,'');
-      try{raw=new URLSearchParams(hash).get(HANDOFF_HASH)||'';}catch{}
-      if(!raw){
-        try{
-          const n=String(window.name||'');
-          if(n.startsWith(HANDOFF_NAME_PREFIX))raw=n.slice(HANDOFF_NAME_PREFIX.length);
-        }catch{}
+        return editableText(el).trim().length > 0;
+      } catch {
+        return false;
       }
-      if(!raw)return false;
-      const job=decodeTransfer(raw);
-      if(!job||job.v!==1||typeof job.text!=='string'||!job.text||job.text.length>300000)return false;
-      if(!Number.isFinite(job.at)||Date.now()-job.at>MAX_AGE)return false;
-      handoffConsumed=true;
+    }
+
+    let handoffConsumed = false;
+    async function consumeHandoff() {
+      if (handoffConsumed) return false;
+
+      let raw = '';
+      const hash = String(location.hash || '').replace(/^#/, '');
+      try { raw = new URLSearchParams(hash).get(HANDOFF_HASH) || ''; } catch {}
+      if (!raw) {
+        try {
+          const name = String(window.name || '');
+          if (name.startsWith(HANDOFF_NAME_PREFIX)) raw = name.slice(HANDOFF_NAME_PREFIX.length);
+        } catch {}
+      }
+      if (!raw) return false;
+
+      const job = decodeTransfer(raw);
+      if (!job || job.v !== 1 || typeof job.text !== 'string' || !job.text || job.text.length > 300000) return false;
+      if (!Number.isFinite(job.at) || Date.now() - job.at > MAX_AGE) return false;
+
+      handoffConsumed = true;
       toast('서사 정리 내용을 받았어. GPT 입력창을 찾는 중…');
-      // Clear both transport channels before touching the composer so refresh/back
-      // cannot fill the same prompt twice.
-      try{if(String(window.name||'').startsWith(HANDOFF_NAME_PREFIX))window.name='';}catch{}
-      try{if(location.hash)history.replaceState(history.state,'',location.pathname+location.search);}catch{}
-      const deadline=Date.now()+30000;
-      let prompt=null;
-      while(Date.now()<deadline){
-        prompt=findPrompt();
-        if(prompt)break;
+
+      // 같은 작업이 새로고침/뒤로가기로 다시 입력되지 않도록 전달용 임시값을 먼저 지운다.
+      try {
+        if (String(window.name || '').startsWith(HANDOFF_NAME_PREFIX)) window.name = '';
+      } catch {}
+      try {
+        if (location.hash) history.replaceState(history.state, '', location.pathname + location.search);
+      } catch {}
+
+      const deadline = Date.now() + 30000;
+      let prompt = null;
+      while (Date.now() < deadline) {
+        prompt = findPrompt();
+        if (prompt) break;
         await sleep(200);
       }
-      if(!prompt){toast('GPT 입력창을 찾지 못했어. 복사된 내용을 직접 붙여넣어 줘.');return true;}
-      const ok=await insertPrompt(prompt,job.text);
-      if(ok){
+
+      if (!prompt) {
+        toast('GPT 입력창을 찾지 못했어. 복사된 내용을 직접 붙여넣어 줘.');
+        return true;
+      }
+
+      const ok = await insertPrompt(prompt, job.text);
+      if (ok) {
         prompt.focus();
         toast('GPT 입력창에 자동으로 채웠어. 확인한 뒤 전송은 직접 눌러 줘.');
-      }else toast('자동 입력에 실패했어. 복사된 내용을 직접 붙여넣어 줘.');
+      } else {
+        toast('자동 입력에 실패했어. 복사된 내용을 직접 붙여넣어 줘.');
+      }
       return true;
     }
-    // ChatGPT can finish its SPA navigation after the remote script loads.
-    // A few bounded retries cover that transition without continuous polling.
+
     consumeHandoff();
-    setTimeout(consumeHandoff,400);
-    setTimeout(consumeHandoff,1200);
-    window.addEventListener('pageshow',()=>setTimeout(consumeHandoff,80),{once:true});
+    setTimeout(consumeHandoff, 400);
+    setTimeout(consumeHandoff, 1200);
+    window.addEventListener('pageshow', () => setTimeout(consumeHandoff, 80), { once: true });
   }
 
-if(parentSite){
-    let selected=null,activeTab='main',purpose='narrator',scope='withHistory',roomId='';
-    let iframeOrigin='https://frame.pingpong.ai', waitingForFrame=false, frameResponded=false;
-    function locateFrame(){
-      const arr=[...document.querySelectorAll('iframe')];
-      return arr.find(f=>{try{return new URL(f.src,location.href).hostname==='frame.pingpong.ai';}catch{return false;}})||null;
+  // ---------------------------------------------------------------------------
+  // Zeta parent page UI
+  // ---------------------------------------------------------------------------
+  if (parentSite) {
+    let selected = null;
+    let activeTab = 'main';
+    let purpose = 'narrator';
+    let scope = 'withHistory';
+    let roomId = '';
+    let requestedTurns = 10;
+    let confirmedPrompt = '';
+    let waitingForFrame = false;
+    const iframeOrigin = 'https://frame.pingpong.ai';
+
+    function locateFrame() {
+      return [...document.querySelectorAll('iframe')].find(frame => {
+        try { return new URL(frame.src, location.href).hostname === 'frame.pingpong.ai'; }
+        catch { return false; }
+      }) || null;
     }
-    function toFrame(kind){
-      const f=locateFrame();
-      if(!f?.contentWindow){toast('채팅 iframe을 찾지 못했어. 제타 채팅방 화면에서 다시 시도해 줘.');return false;}
-      if(kind==='begin'){
-        waitingForFrame=true;
-        setTimeout(()=>{if(waitingForFrame){waitingForFrame=false;toast('iframe 응답 없음: Stay 로더가 frame.pingpong.ai에서도 실행되도록 설정해 줘.');show('main');}},2500);
+
+    function toFrame(kind, extra = {}) {
+      const frame = locateFrame();
+      if (!frame?.contentWindow) {
+        toast('채팅 iframe을 찾지 못했어. 제타 채팅방 화면에서 다시 시도해 줘.');
+        return false;
       }
-      f.contentWindow.postMessage({channel:CHANNEL,kind},iframeOrigin);
+      if (kind === 'collect') {
+        waitingForFrame = true;
+        setTimeout(() => {
+          if (!waitingForFrame) return;
+          waitingForFrame = false;
+          toast('iframe 응답이 없어. Stay 로더가 frame.pingpong.ai에서도 실행되는지 확인해 줘.');
+        }, 2500);
+      }
+      frame.contentWindow.postMessage({ channel: CHANNEL, kind, ...extra }, iframeOrigin);
       return true;
     }
-    window.addEventListener('message',e=>{
-      if(e.origin!==iframeOrigin || e.data?.channel!==CHANNEL)return;
-      const f=locateFrame();if(!f||e.source!==f.contentWindow)return;
-      if(e.data.kind==='frame-ready')frameResponded=true;
-      if(e.data.kind==='ready'||e.data.kind==='error'||e.data.kind==='selected'||e.data.kind==='cancel'){waitingForFrame=false;frameResponded=true;}
-      if(e.data.kind==='selected'){
-        const arr=e.data.messages;
-        if(!Array.isArray(arr)||!arr.length||arr.length>MAX_MESSAGES||!arr.every(m=>(m.role==='user'||m.role==='character')&&typeof m.text==='string'&&m.text.length<=24000))return;
-        selected=arr.map(m=>({role:m.role,text:m.text,speaker:typeof m.speaker==='string'?m.speaker:''}));
-        show('main');toast(`${Math.ceil(arr.length/2)}턴 · 메시지 ${arr.length}개 선택했어.`);
+
+    window.addEventListener('message', event => {
+      if (event.origin !== iframeOrigin || event.data?.channel !== CHANNEL) return;
+      const frame = locateFrame();
+      if (!frame || event.source !== frame.contentWindow) return;
+
+      if (event.data.kind === 'collected' || event.data.kind === 'error') waitingForFrame = false;
+
+      if (event.data.kind === 'collected') {
+        const messages = event.data.messages;
+        if (!Array.isArray(messages) || !messages.length || messages.length > MAX_MESSAGES) return;
+        if (!messages.every(item =>
+          (item.role === 'user' || item.role === 'character') &&
+          typeof item.text === 'string' && item.text.length <= 24000
+        )) return;
+
+        selected = messages.map(item => ({
+          role: item.role,
+          text: item.text,
+          speaker: typeof item.speaker === 'string' ? item.speaker : ''
+        }));
+        confirmedPrompt = '';
+
+        const got = Math.ceil(selected.length / 2);
+        const requested = Number(event.data.requestedTurns || requestedTurns);
+        show('main');
+        if (got < requested) toast(`현재 로드된 대화에서 ${got}턴만 가져왔어.`);
+        else toast(`${got}턴 가져왔어.`);
       }
-      if(e.data.kind==='error'){toast(String(e.data.message||'iframe 메시지 확인 실패'));show('main');}
-      if(e.data.kind==='cancel'){show('main');}
+
+      if (event.data.kind === 'error') {
+        toast(String(event.data.message || '대화 가져오기에 실패했어.'));
+      }
     });
-    const count=()=>Math.ceil((selected?.length||0)/2);
-    function dialogueText(){
-      if(!selected?.length)return '';
-      const names={};
-      for(const role of ['character','user']){
-        const group=selected.filter(m=>m.role===role);
-        // Prefer a separate, already rendered DOM name; never request hidden user data.
-        const explicit=group.map(m=>clean(m.speaker)).filter(Boolean);
-        if(explicit.length && explicit.every(n=>n===explicit[0])){
-          names[role]=explicit[0];continue;
+
+    const count = () => Math.ceil((selected?.length || 0) / 2);
+
+    function dialogueText() {
+      if (!selected?.length) return '';
+      const names = {};
+
+      for (const role of ['character', 'user']) {
+        const group = selected.filter(message => message.role === role);
+        const explicit = group.map(message => clean(message.speaker)).filter(Boolean);
+        if (explicit.length && explicit.every(name => name === explicit[0])) {
+          names[role] = explicit[0];
+          continue;
         }
-        // Some Zeta layouts concatenate the displayed name with the message.
-        // Only recover a prefix repeatedly observed across different messages.
-        if(group.length>=2){
-          let prefix=group[0].text;
-          for(const m of group.slice(1)){
-            let i=0;while(i<prefix.length && i<m.text.length && prefix[i]===m.text[i])i++;
-            prefix=prefix.slice(0,i);
+
+        if (group.length >= 2) {
+          let prefix = group[0].text;
+          for (const message of group.slice(1)) {
+            let index = 0;
+            while (index < prefix.length && index < message.text.length && prefix[index] === message.text[index]) index += 1;
+            prefix = prefix.slice(0, index);
           }
-          if(/^[가-힣]{2,8}$/.test(prefix) && group.every(m=>m.text.length>prefix.length)){
-            names[role]=prefix;
+          if (/^[가-힣]{2,8}$/.test(prefix) && group.every(message => message.text.length > prefix.length)) {
+            names[role] = prefix;
           }
         }
       }
-      return selected.map(m=>{
-        const speaker=names[m.role]||(m.role==='user'?'유저':'캐릭터');
-        const body=names[m.role] && m.text.startsWith(names[m.role])
-          ? clean(m.text.slice(names[m.role].length)) : clean(m.text);
-        return `${speaker}:
-${body}`;
+
+      return selected.map(message => {
+        const speaker = names[message.role] || (message.role === 'user' ? '유저' : '캐릭터');
+        const body = names[message.role] && message.text.startsWith(names[message.role])
+          ? clean(message.text.slice(names[message.role].length))
+          : clean(message.text);
+        return `${speaker}:\n${body}`;
       }).join('\n\n');
     }
-    // Cross-site handoff uses the URL fragment, which is not sent as an HTTP request.
-    // ChatGPT consumes it once, removes it from the address bar, and only fills the composer.
-    function buildGPTTarget(url,payload){
-      try{
-        const encoded=encodeTransfer({v:1,text:payload,at:Date.now()});
-        const u=new URL(url);
-        u.searchParams.set('no_universal_links','1');
-        u.hash=`${HANDOFF_HASH}=${encoded}`;
-        return {url:u.toString(),encoded};
-      }catch{return null;}
-    }
-    function prepareGPTWindow(){
-      try{
-        const popup=window.open('about:blank','_blank');
-        if(!popup||popup.closed)return null;
-        return popup;
-      }catch{return null;}
-    }
-    function navigateGPTWindow(popup,url,payload){
-      const target=buildGPTTarget(url,payload);
-      if(!popup||!target)return false;
-      // window.name is a second handoff channel in case ChatGPT removes the hash
-      // during its initial SPA navigation. The GPT-side code clears it after use.
-      try{popup.name=HANDOFF_NAME_PREFIX+target.encoded;}catch{}
-      try{popup.opener=null;}catch{}
-      try{popup.location.replace(target.url);return true;}catch{
-        try{popup.location.href=target.url;return true;}catch{return false;}
-      }
-    }
-    function promptText(){
-      if(!selected?.length)return '';
-      const p=purpose==='narrator'
+
+    function promptOnlyText() {
+      const usage = purpose === 'narrator'
         ? '제타 AI 채팅 내레이터 덮어씌우기에 넣을 간결한 이어쓰기 메모로 정리해 줘. 현재 장면, 관계 변화, 감정선, 중요한 사건, 약속, 비밀, 이어질 장면의 필수 맥락을 우선해.'
         : '제타 유저 프로필에 넣을 서사 기록으로 정리해 줘. 장기적으로 유지해야 하는 관계, 실제 사건, 확정된 약속과 감정 변화를 간결하게 보존해.';
-      const s=scope==='withHistory'
+
+      const range = scope === 'withHistory'
         ? '이 GPT 채팅방에 남아 있는 이전 서사 정리가 참고 가능하면 함께 반영해 통합 요약을 작성해 줘. 이전 기록이 확인되지 않으면 이번 발췌만 사용하고 모순을 임의로 해결하지 마.'
-        : '이전 서사 기록을 사용하지 말고 이번 선택 대화만 근거로 정리해 줘.';
-      return `[제타 서사 정리 요청]\n\n[사용 용도]\n${p}\n\n[정리 범위]\n${s}\n\n[공통 규칙]\n- 원문에 없는 이름, 사건, 설정, 감정을 새로 만들지 마.\n- 확인되지 않은 사실이나 화자는 추측하지 마.\n- 사건 순서와 관계 변화, 약속, 비밀 및 복선은 보존해.\n- 반복 농담과 수식은 줄여.\n- 최종 결과는 바로 복사할 수 있는 정리문만 작성해.\n\n[선택 구간: 약 ${count()}턴 / 메시지 ${selected.length}개]\n${dialogueText()}\n\n[선택 구간 끝]`;
+        : '이전 서사 기록을 사용하지 말고 이번에 가져온 대화만 근거로 정리해 줘.';
+
+      return `[제타 서사 정리 요청]\n\n[사용 용도]\n${usage}\n\n[정리 범위]\n${range}\n\n[공통 규칙]\n- 원문에 없는 이름, 사건, 설정, 감정을 새로 만들지 마.\n- 확인되지 않은 사실이나 화자는 추측하지 마.\n- 사건 순서와 관계 변화, 약속, 비밀 및 복선은 보존해.\n- 반복 농담과 수식은 줄여.\n- 최종 결과는 바로 복사할 수 있는 정리문만 작성해.`;
     }
-    function newDialog(){
-      document.getElementById('zgm41-overlay')?.remove();
-      const back=create('div',document.body);back.id='zgm41-overlay';
-      const dialog=create('div',back);dialog.id='zgm41-dialog';
-      back.onclick=e=>{if(e.target===back)back.remove();};
-      const head=create('div',dialog,null,'display:flex;justify-content:space-between;align-items:center;gap:8px');
-      create('strong',head,'Zeta GPT Memory','font-size:17px');
-      const close=create('button',head,'✕');close.onclick=()=>back.remove();
-      const tabs=create('div',dialog,null,'display:flex;gap:8px;margin:15px 0 10px;padding-bottom:10px;border-bottom:1px solid #ddd');
-      const a=create('button',tabs,'서사 정리'),b=create('button',tabs,'설정');
-      a.onclick=()=>show('main');b.onclick=()=>show('settings');
-      (activeTab==='main'?a:b).classList.add('primary');
-      return create('div',dialog);
+
+    function fullPromptText() {
+      if (!selected?.length || !confirmedPrompt) return '';
+      return `${confirmedPrompt}\n\n[대화 기록: 최근 ${count()}턴 / 메시지 ${selected.length}개]\n${dialogueText()}\n\n[대화 기록 끝]`;
     }
-    function label(root,t){return create('label',root,t);}
-    function field(root,placeholder,value=''){const x=create('input',root);x.placeholder=placeholder;x.value=value;return x;}
-    function btn(root,t,cb,primary=false){const x=create('button',root,t);x.type='button';x.onclick=cb;if(primary)x.classList.add('primary');return x;}
-    function buttons(root){return create('div',root,null,'display:flex;flex-wrap:wrap;gap:7px;margin-top:12px');}
-    function radio(root,title,name,value,checked,fn){
-      const line=create('label',root,null,'display:flex;gap:8px;align-items:center;margin:6px 0!important;font-weight:500!important');
-      const r=create('input',line);r.type='radio';r.name=name;r.value=value;r.checked=checked;r.style.cssText='width:auto!important;flex:none';
-      r.onchange=()=>{if(r.checked)fn(value);};create('span',line,title);
+
+    function clearTransient() {
+      selected = null;
+      confirmedPrompt = '';
     }
-    async function show(tab='main'){
-      activeTab=tab;const body=newDialog();
-      if(tab==='settings'){
-        label(body,'별칭');const name=field(body,'예: 이사랑 서사 정리');
-        label(body,'GPT 채팅방 주소');const url=field(body,'https://chatgpt.com/c/...');
-        create('div',body,'프로젝트 홈이나 공유 링크가 아닌 실제 개별 대화 주소(/c/...)를 저장해 줘.','font-size:12px;color:#666;margin-top:5px');
-        let editing=null;const control=buttons(body);
-        btn(control,'저장',async()=>{
-          const n=clean(name.value),u=validURL(url.value);if(!n||n.length>50||!u){toast('별칭과 GPT 개별 채팅 주소를 확인해 줘.');return;}
-          const list=await rooms();
-          if(editing){const target=list.find(x=>x.id===editing);if(target){target.name=n;target.url=u;}}
-          else{const entry={id:`${Date.now()}_${Math.random().toString(36).slice(2)}`,name:n,url:u};list.push(entry);roomId=entry.id;}
-          await db.set(ROOM_KEY,list);show('settings');toast('채팅방 저장 완료');
-        },true);
-        btn(control,'입력 초기화',()=>{editing=null;name.value='';url.value='';});
-        label(body,'저장된 GPT 채팅방');const list=await rooms();
-        if(!list.length)create('p',body,'저장된 채팅방이 없어.','color:#777');
-        for(const r of list){
-          const box=create('div',body,null,'border:1px solid #ddd;background:#fff;border-radius:11px;padding:11px;margin:8px 0;overflow-wrap:anywhere');
-          create('strong',box,r.name);create('div',box,r.url,'font-size:11px;color:#777;margin-top:4px');
-          const row=buttons(box);btn(row,'수정',()=>{editing=r.id;name.value=r.name;url.value=r.url;name.focus();});
-          btn(row,'삭제',async()=>{if(!confirm(`“${r.name}”을 삭제할까?`))return;await db.set(ROOM_KEY,(await rooms()).filter(x=>x.id!==r.id));if(roomId===r.id)roomId='';show('settings');});
+
+    function buildGPTTarget(url, payload) {
+      try {
+        const encoded = encodeTransfer({ v: 1, text: payload, at: Date.now() });
+        const target = new URL(url);
+        target.searchParams.set('no_universal_links', '1');
+        target.hash = `${HANDOFF_HASH}=${encoded}`;
+        return { url: target.toString(), encoded };
+      } catch {
+        return null;
+      }
+    }
+
+    function prepareGPTWindow() {
+      try {
+        const popup = window.open('about:blank', '_blank');
+        if (!popup || popup.closed) return null;
+        return popup;
+      } catch {
+        return null;
+      }
+    }
+
+    function navigateGPTWindow(popup, url, payload) {
+      const target = buildGPTTarget(url, payload);
+      if (!popup || !target) return false;
+      try { popup.name = HANDOFF_NAME_PREFIX + target.encoded; } catch {}
+      try { popup.opener = null; } catch {}
+      try {
+        popup.location.replace(target.url);
+        return true;
+      } catch {
+        try {
+          popup.location.href = target.url;
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    }
+
+    function newDialog() {
+      document.getElementById('zgm48-overlay')?.remove();
+      const overlay = create('div', document.body);
+      overlay.id = 'zgm48-overlay';
+      const dialog = create('div', overlay);
+      dialog.id = 'zgm48-dialog';
+      overlay.onclick = event => { if (event.target === overlay) overlay.remove(); };
+
+      const head = create('div', dialog, null, 'display:flex;justify-content:space-between;align-items:center;gap:8px');
+      create('strong', head, 'Zeta GPT Memory', 'font-size:17px');
+      const close = create('button', head, '✕');
+      close.onclick = () => overlay.remove();
+
+      const tabs = create('div', dialog, null, 'display:flex;gap:8px;margin:15px 0 10px;padding-bottom:10px;border-bottom:1px solid #ddd');
+      const main = create('button', tabs, '서사 정리');
+      const settings = create('button', tabs, '설정');
+      main.onclick = () => show('main');
+      settings.onclick = () => show('settings');
+      (activeTab === 'main' ? main : settings).classList.add('primary');
+
+      return create('div', dialog);
+    }
+
+    function label(root, text) {
+      return create('label', root, text);
+    }
+
+    function field(root, placeholder, value = '') {
+      const input = create('input', root);
+      input.placeholder = placeholder;
+      input.value = value;
+      return input;
+    }
+
+    function btn(root, text, handler, primary = false) {
+      const button = create('button', root, text);
+      button.type = 'button';
+      button.onclick = handler;
+      if (primary) button.classList.add('primary');
+      return button;
+    }
+
+    function buttons(root) {
+      return create('div', root, null, 'display:flex;flex-wrap:wrap;gap:7px;margin-top:12px');
+    }
+
+    function radio(root, title, name, value, checked, onChange) {
+      const line = create('label', root, null, 'display:flex;gap:8px;align-items:center;margin:6px 0!important;font-weight:500!important');
+      const input = create('input', line);
+      input.type = 'radio';
+      input.name = name;
+      input.value = value;
+      input.checked = checked;
+      input.style.cssText = 'width:auto!important;flex:none';
+      input.onchange = () => {
+        if (!input.checked) return;
+        onChange(value);
+        confirmedPrompt = '';
+        show('main');
+      };
+      create('span', line, title);
+    }
+
+    async function show(tab = 'main') {
+      activeTab = tab;
+      const body = newDialog();
+
+      if (tab === 'settings') {
+        label(body, '별칭');
+        const name = field(body, '예: 이사랑 서사 정리');
+        label(body, 'GPT 채팅방 주소');
+        const url = field(body, 'https://chatgpt.com/c/...');
+        create('div', body, '프로젝트 홈이나 공유 링크가 아닌 실제 개별 대화 주소(/c/...)를 저장해 줘.', 'font-size:12px;color:#666;margin-top:5px');
+
+        let editing = null;
+        const control = buttons(body);
+        btn(control, '저장', async () => {
+          const roomName = clean(name.value);
+          const roomUrl = validURL(url.value);
+          if (!roomName || roomName.length > 50 || !roomUrl) {
+            toast('별칭과 GPT 개별 채팅 주소를 확인해 줘.');
+            return;
+          }
+          const list = await rooms();
+          if (editing) {
+            const target = list.find(item => item.id === editing);
+            if (target) {
+              target.name = roomName;
+              target.url = roomUrl;
+            }
+          } else {
+            const entry = {
+              id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+              name: roomName,
+              url: roomUrl
+            };
+            list.push(entry);
+            roomId = entry.id;
+          }
+          await db.set(ROOM_KEY, list);
+          show('settings');
+          toast('채팅방 저장 완료');
+        }, true);
+
+        btn(control, '입력 초기화', () => {
+          editing = null;
+          name.value = '';
+          url.value = '';
+        });
+
+        label(body, '저장된 GPT 채팅방');
+        const list = await rooms();
+        if (!list.length) create('p', body, '저장된 채팅방이 없어.', 'color:#777');
+        for (const room of list) {
+          const box = create('div', body, null, 'border:1px solid #ddd;background:#fff;border-radius:11px;padding:11px;margin:8px 0;overflow-wrap:anywhere');
+          create('strong', box, room.name);
+          create('div', box, room.url, 'font-size:11px;color:#777;margin-top:4px');
+          const row = buttons(box);
+          btn(row, '수정', () => {
+            editing = room.id;
+            name.value = room.name;
+            url.value = room.url;
+            name.focus();
+          });
+          btn(row, '삭제', async () => {
+            if (!confirm(`“${room.name}”을 삭제할까?`)) return;
+            await db.set(ROOM_KEY, (await rooms()).filter(item => item.id !== room.id));
+            if (roomId === room.id) roomId = '';
+            show('settings');
+          });
         }
         return;
       }
-      const list=await rooms();
-      label(body,'GPT 채팅방');const select=create('select',body);
-      const empty=create('option',select,list.length?'채팅방 선택':'설정에서 GPT 채팅방을 저장해 줘');empty.value='';
-      list.forEach(r=>{const o=create('option',select,r.name);o.value=r.id;});
-      if(list.some(r=>r.id===roomId))select.value=roomId;
-      select.onchange=()=>roomId=select.value;
-      label(body,'대화 구간');create('div',body,selected?`${count()} / 최대 20턴 · 메시지 ${selected.length}개`:'선택된 구간 없음 · 최대 20턴','background:#eee;border-radius:10px;padding:12px;font-weight:700');
-      const row=buttons(body);
-      btn(row,selected?'다시 선택':'구간 선택',()=>{
-        if(!toFrame('begin'))return;
-        document.getElementById('zgm41-overlay')?.remove();
-        toast('시작 말풍선 → 끝 말풍선을 차례로 눌러 줘. 선택바가 나타나지 않으면 iframe 실행 설정을 확인해 줘.');
-      },true);
-      if(selected)btn(row,'선택 초기화',()=>{selected=null;toFrame('clear');show('main');});
-      label(body,'옵션 1 · 사용 용도');
-      radio(body,'나레이션 덮어씌우기 용도','zgm41-purpose','narrator',purpose==='narrator',v=>purpose=v);
-      radio(body,'유저 프로필에 넣는 용도','zgm41-purpose','profile',purpose==='profile',v=>purpose=v);
-      label(body,'옵션 2 · 정리 범위');
-      radio(body,'이전 서사와 함께 정리','zgm41-scope','withHistory',scope==='withHistory',v=>scope=v);
-      radio(body,'선택한 내용만 정리','zgm41-scope','only',scope==='only',v=>scope=v);
-      if(selected){
-        label(body,'선택한 대화 미리보기');const box=create('textarea',body);box.readOnly=true;box.rows=5;
-        box.value=dialogueText();
-      }
-      const bottom=buttons(body);
-      const copy=btn(bottom,'프롬프트 + 대화 복사',async()=>{
-        if(!selected?.length)return;
-        try{await navigator.clipboard.writeText(promptText());toast('대화와 프롬프트를 복사했어.');}
-        catch{toast('클립보드 권한 때문에 복사에 실패했어.');}
-      },true);copy.disabled=!selected;
-      const go=btn(bottom,'GPT로 가져가기',async()=>{
-        const target=list.find(r=>r.id===select.value);
-        if(!target){toast('GPT 채팅방을 먼저 선택해 줘.');return;}
-        if(!selected?.length){toast('구간을 먼저 선택해 줘.');return;}
-        const payload=promptText();
 
-        // IMPORTANT: open the new tab synchronously inside the user's click.
-        // Waiting for clipboard first causes iOS Safari to treat window.open as a popup.
-        const popup=prepareGPTWindow();
-        if(!popup){
-          try{await navigator.clipboard.writeText(payload);}catch{}
+      const list = await rooms();
+
+      label(body, 'GPT 채팅방');
+      const select = create('select', body);
+      const empty = create('option', select, list.length ? '채팅방 선택' : '설정에서 GPT 채팅방을 저장해 줘');
+      empty.value = '';
+      list.forEach(room => {
+        const option = create('option', select, room.name);
+        option.value = room.id;
+      });
+      if (list.some(room => room.id === roomId)) select.value = roomId;
+      select.onchange = () => { roomId = select.value; };
+
+      label(body, '최근 대화 가져오기');
+      const fetchRow = create('div', body, null, 'display:flex;align-items:center;gap:8px');
+      const turnInput = create('input', fetchRow);
+      turnInput.type = 'number';
+      turnInput.min = '1';
+      turnInput.max = String(MAX_TURNS);
+      turnInput.step = '1';
+      turnInput.inputMode = 'numeric';
+      turnInput.value = String(requestedTurns);
+      turnInput.style.cssText = 'width:90px;flex:none;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui';
+      const fetchButton = btn(fetchRow, '가져오기', () => {
+        let value = Number.parseInt(turnInput.value, 10);
+        if (!Number.isFinite(value)) value = 10;
+        value = Math.max(1, Math.min(MAX_TURNS, value));
+        requestedTurns = value;
+        turnInput.value = String(value);
+        selected = null;
+        confirmedPrompt = '';
+        if (!toFrame('collect', { turns: value })) return;
+        toast(`최근 ${value}턴을 확인하는 중…`);
+      }, true);
+      fetchButton.style.flex = 'none';
+      create('div', body, `최대 ${MAX_TURNS}턴`, 'font-size:11px;color:#999;margin-top:5px');
+
+      if (selected?.length) {
+        create('div', body, `최근 ${count()}턴 · 메시지 ${selected.length}개 가져옴`, 'margin-top:10px;background:#eee;border-radius:9px;padding:9px 11px;font-weight:700');
+        label(body, '대화 미리보기');
+        const preview = create('textarea', body);
+        preview.readOnly = true;
+        preview.rows = 7;
+        preview.value = dialogueText();
+        preview.style.maxHeight = '190px';
+        preview.style.overflowY = 'auto';
+      }
+
+      label(body, '옵션 1 · 사용 용도');
+      radio(body, '나레이션 덮어씌우기 용도', 'zgm48-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
+      radio(body, '유저 프로필에 넣는 용도', 'zgm48-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
+
+      label(body, '옵션 2 · 정리 범위');
+      radio(body, '이전 서사와 함께 정리', 'zgm48-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
+      radio(body, '복사한 내용만 정리', 'zgm48-scope', 'only', scope === 'only', value => { scope = value; });
+
+      const confirmRow = buttons(body);
+      const confirmButton = btn(confirmRow, '확인', () => {
+        if (!selected?.length) {
+          toast('먼저 대화를 가져와 줘.');
+          return;
+        }
+        confirmedPrompt = promptOnlyText();
+        show('main');
+        toast('선택한 옵션으로 프롬프트를 만들었어.');
+      }, true);
+      confirmButton.disabled = !selected?.length;
+
+      label(body, '프롬프트 미리보기');
+      const promptPreview = create('textarea', body);
+      promptPreview.readOnly = true;
+      promptPreview.rows = 8;
+      promptPreview.placeholder = '대화를 가져오고 옵션을 선택한 뒤 확인을 누르면 여기에 프롬프트만 보여줘.';
+      promptPreview.value = confirmedPrompt;
+      promptPreview.style.maxHeight = '210px';
+      promptPreview.style.overflowY = 'auto';
+
+      const bottom = buttons(body);
+      const copy = btn(bottom, '대화 + 프롬프트 복사', async () => {
+        const payload = fullPromptText();
+        if (!payload) {
+          toast('대화를 가져오고 확인을 먼저 눌러 줘.');
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(payload);
+          clearTransient();
+          show('main');
+          toast('대화와 프롬프트를 복사했고 임시 대화 데이터도 정리했어.');
+        } catch {
+          toast('클립보드 권한 때문에 복사에 실패했어.');
+        }
+      }, true);
+      copy.disabled = !selected?.length || !confirmedPrompt;
+
+      const go = btn(bottom, 'GPT로 가져가기', async () => {
+        const targetRoom = list.find(room => room.id === select.value);
+        if (!targetRoom) {
+          toast('GPT 채팅방을 먼저 선택해 줘.');
+          return;
+        }
+        const payload = fullPromptText();
+        if (!payload) {
+          toast('대화를 가져오고 확인을 먼저 눌러 줘.');
+          return;
+        }
+
+        // iOS Safari 팝업 차단을 피하려고 사용자 클릭 동기 구간에서 빈 새 탭을 먼저 연다.
+        const popup = prepareGPTWindow();
+        if (!popup) {
+          try { await navigator.clipboard.writeText(payload); } catch {}
           toast('새 탭이 차단됐어. Safari의 팝업 차단 설정을 확인해 줘. 내용은 복사를 시도했어.');
           return;
         }
-        try{await navigator.clipboard.writeText(payload);}catch{}
-        if(!navigateGPTWindow(popup,target.url,payload)){
-          try{popup.close();}catch{}
+
+        try { await navigator.clipboard.writeText(payload); } catch {}
+        if (!navigateGPTWindow(popup, targetRoom.url, payload)) {
+          try { popup.close(); } catch {}
           toast('GPT 채팅방으로 이동하지 못했어. 복사된 내용을 직접 붙여넣어 줘.');
           return;
         }
-        toast('GPT 채팅방을 새 탭으로 열었어. 입력창 자동 채우기를 시도해.');
-      },true);go.disabled=!selected;
-create('p',body,'제타에서는 선택 시 화면에 표시된 말풍선 DOM만 읽어. 이전 구간이 로드되지 않았다면 수동으로 스크롤해 줘. GPT에서는 입력창 자동 채우기만 시도하고 전송은 하지 않아. 자동 입력이 실패할 때를 대비해 같은 내용은 클립보드에도 복사해.','font-size:11px;color:#777;margin-top:12px');
+
+        clearTransient();
+        show('main');
+        toast('GPT 채팅방을 새 탭으로 열었어. 임시 대화 데이터는 정리했어.');
+      }, true);
+      go.disabled = !selected?.length || !confirmedPrompt;
+
+      create(
+        'p',
+        body,
+        '대화는 가져오기 버튼을 누른 순간 화면에 렌더된 말풍선 DOM만 읽어. 제타 내부 API는 사용하지 않아. 복사 또는 GPT 가져가기가 성공하면 가져온 대화와 생성된 프롬프트 미리보기는 임시 상태에서 지워져.',
+        'font-size:11px;color:#777;margin-top:12px'
+      );
     }
-    function mount(){
-      if(document.getElementById('zgm41-trigger'))return;
-      const b=create('button',document.body,'서사 정리');b.id='zgm41-trigger';b.type='button';b.onclick=()=>show('main');
+
+    function mount() {
+      if (document.getElementById('zgm48-trigger')) return;
+      const button = create('button', document.body, '서사 정리');
+      button.id = 'zgm48-trigger';
+      button.type = 'button';
+      button.onclick = () => show('main');
     }
+
     mount();
   }
 })();
