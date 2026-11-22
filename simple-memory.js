@@ -1,8 +1,10 @@
 (() => {
   'use strict';
-  if (window.__ZGM_V55__) return;
-  window.__ZGM_V55__ = true;
-  window.__ZGM_REMOTE_CORE_VERSION__ = '5.5';
+  if (window.__ZGM_V56__) return;
+  window.__ZGM_V56__ = true;
+  window.__ZGM_REMOTE_CORE_LOADED__ = true;
+  window.__ZGM_REMOTE_CORE_READY__ = true;
+  window.__ZGM_REMOTE_CORE_VERSION__ = '5.6';
 
   const host = location.hostname;
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
@@ -10,9 +12,9 @@
   const gptSite = /(^|\.)chatgpt\.com$/.test(host) && window === window.top;
   if (!parentSite && !frameSite && !gptSite) return;
 
-  const CHANNEL = 'zgm.v55.bridge';
+  const CHANNEL = 'zgm.v56.bridge';
   const HANDOFF_HASH = 'zgmjob';
-  const HANDOFF_NAME_PREFIX = '__ZGM_JOB_ID_V2__:';
+  const HANDOFF_NAME_PREFIX = '__ZGM_JOB_PAYLOAD_V3__:';
   const STORAGE_REQUEST_EVENT = '__ZGM_GM_REQUEST_V1__';
   const STORAGE_RESPONSE_EVENT = '__ZGM_GM_RESPONSE_V1__';
   const BASE = 'zgm-independent-v4-';
@@ -28,6 +30,32 @@
 
   const clean = s => String(s ?? '').replace(/\u200b/g, '').trim();
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  function encodeTransfer(value) {
+    try {
+      const bytes = new TextEncoder().encode(JSON.stringify(value));
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    } catch {
+      return '';
+    }
+  }
+
+  function decodeTransfer(value) {
+    try {
+      const base64 = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64 + '='.repeat((4 - base64.length % 4) % 4);
+      const binary = atob(padded);
+      const bytes = Uint8Array.from(binary, ch => ch.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      return null;
+    }
+  }
 
   function storageBridgeRequest(operation, key, value, fallback) {
     return new Promise((resolve, reject) => {
@@ -112,14 +140,14 @@
   };
 
   function toast(message) {
-    document.getElementById('zgm55-toast')?.remove();
+    document.getElementById('zgm56-toast')?.remove();
     const el = create(
       'div',
       document.body,
       message,
       'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#27272a;color:#fff;border-radius:12px;padding:12px 16px;max-width:90vw;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0005'
     );
-    el.id = 'zgm55-toast';
+    el.id = 'zgm56-toast';
     setTimeout(() => el.remove(), 4400);
   }
 
@@ -147,17 +175,17 @@
   }
 
   const css = `
-    #zgm55-trigger,#zgm55-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
-    #zgm55-overlay *{box-sizing:border-box}
-    #zgm55-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
-    #zgm55-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
-    #zgm55-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
-    #zgm55-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
-    #zgm55-overlay button.primary{background:#292929;color:white;border-color:#292929}
-    #zgm55-overlay button:disabled{opacity:.42;cursor:default}
-    #zgm55-overlay input,#zgm55-overlay select,#zgm55-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
-    #zgm55-overlay label{display:block;font-weight:700;margin:12px 0 6px}
-    #zgm55-overlay textarea{resize:vertical}
+    #zgm56-trigger,#zgm56-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
+    #zgm56-overlay *{box-sizing:border-box}
+    #zgm56-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
+    #zgm56-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
+    #zgm56-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
+    #zgm56-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
+    #zgm56-overlay button.primary{background:#292929;color:white;border-color:#292929}
+    #zgm56-overlay button:disabled{opacity:.42;cursor:default}
+    #zgm56-overlay input,#zgm56-overlay select,#zgm56-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
+    #zgm56-overlay label{display:block;font-weight:700;margin:12px 0 6px}
+    #zgm56-overlay textarea{resize:vertical}
   `;
   create('style', document.head || document.documentElement, css);
 
@@ -299,6 +327,7 @@
     try {
       const hasMarker = /(?:^#|[&#])zgmjob=/.test(String(location.hash || '')) ||
         !!sessionStorage.getItem(EARLY_JOB_SESSION_KEY) ||
+        !!window.__ZGM_EARLY_JOB_TRANSFER__ ||
         String(window.name || '').startsWith(HANDOFF_NAME_PREFIX);
       if (hasMarker) setTimeout(() => toast('Zeta GPT Memory 연결을 확인하는 중…'), 50);
     } catch {}
@@ -451,101 +480,91 @@
 
     let handoffConsumed = false;
 
-    function handoffIdFromPage() {
-      let id = '';
+    function transferPayloadFromPage() {
+      let raw = '';
       try {
         const hash = String(location.hash || '').replace(/^#/, '');
-        id = new URLSearchParams(hash).get(HANDOFF_HASH) || '';
+        raw = new URLSearchParams(hash).get(HANDOFF_HASH) || '';
       } catch {}
-      if (!id) {
+
+      if (!raw) {
         try {
           const name = String(window.name || '');
-          if (name.startsWith(HANDOFF_NAME_PREFIX)) id = name.slice(HANDOFF_NAME_PREFIX.length);
+          if (name.startsWith(HANDOFF_NAME_PREFIX)) raw = name.slice(HANDOFF_NAME_PREFIX.length);
         } catch {}
       }
-      // Loader가 document-start에서 hash/window.name의 작업 ID를 먼저 보존한다.
-      if (!id) {
-        try { id = sessionStorage.getItem(EARLY_JOB_SESSION_KEY) || ''; } catch {}
+
+      if (!raw) {
+        try { raw = String(window.__ZGM_EARLY_JOB_TRANSFER__ || ''); } catch {}
       }
-      if (!id) {
-        try {
-          const sessionJob = JSON.parse(sessionStorage.getItem(GPT_SESSION_KEY) || 'null');
-          id = sessionJob?.id || '';
-        } catch {}
+
+      if (!raw) {
+        try { raw = sessionStorage.getItem(EARLY_JOB_SESSION_KEY) || ''; } catch {}
       }
-      return clean(id);
+
+      return clean(raw);
     }
 
     function clearHandoffMarkers() {
       try {
         if (String(window.name || '').startsWith(HANDOFF_NAME_PREFIX)) window.name = '';
       } catch {}
+      try { delete window.__ZGM_EARLY_JOB_TRANSFER__; } catch {}
       try { sessionStorage.removeItem(EARLY_JOB_SESSION_KEY); } catch {}
       try {
         if (location.hash) history.replaceState(history.state, '', location.pathname + location.search);
       } catch {}
     }
 
+    function validJob(job) {
+      return !!job &&
+        job.v === 3 &&
+        typeof job.id === 'string' && !!job.id &&
+        typeof job.text === 'string' && !!job.text &&
+        job.text.length <= 300000 &&
+        Number.isFinite(job.at) &&
+        Date.now() - Number(job.at) <= MAX_AGE;
+    }
+
     async function loadHandoffJob() {
-      const expectedId = handoffIdFromPage();
+      const transferPayload = transferPayloadFromPage();
+
+      if (transferPayload) {
+        const transferredJob = decodeTransfer(transferPayload);
+        if (validJob(transferredJob)) {
+          try { sessionStorage.setItem(GPT_SESSION_KEY, JSON.stringify(transferredJob)); } catch {}
+          try {
+            const stored = await sharedStorage.get(HANDOFF_KEY, null);
+            if (stored?.id === transferredJob.id) await sharedStorage.del(HANDOFF_KEY);
+          } catch {}
+          return transferredJob;
+        }
+      }
 
       let sessionJob = null;
       try { sessionJob = JSON.parse(sessionStorage.getItem(GPT_SESSION_KEY) || 'null'); } catch {}
-      if (sessionJob && (!expectedId || sessionJob.id === expectedId)) return sessionJob;
+      if (validJob(sessionJob)) return sessionJob;
 
-      // iOS에서는 ChatGPT 탭을 사용자 클릭 순간 직접 먼저 연고,
-      // 직후 제타 탭이 GM 저장소에 작업을 기록한다.
-      // 그래서 GPT 쪽이 아주 조금 먼저 뜨더라도 작업이 생길 때까지 제한적으로 기다린다.
-      const deadline = Date.now() + (expectedId ? 8000 : 1200);
       let job = null;
+      try { job = await sharedStorage.get(HANDOFF_KEY, null); } catch { return null; }
+      if (!validJob(job)) return null;
 
-      while (Date.now() < deadline) {
-        try {
-          job = await sharedStorage.get(HANDOFF_KEY, null);
-        } catch (error) {
-          toast('GPT 전달 저장소에 연결하지 못했어. Stay 로더 연결을 확인해 줘.');
-          return null;
-        }
-
-        if (expectedId) {
-          if (job?.id === expectedId) break;
-        } else {
-          const sameTarget = !!job?.targetPath && job.targetPath === location.pathname;
-          const fresh = !!job?.at && Date.now() - Number(job.at) < 60 * 1000;
-          if (job && sameTarget && fresh) break;
-        }
-
-        job = null;
-        await sleep(150);
-      }
-
-      if (!job) return null;
+      const sameTarget = !job.targetPath || job.targetPath === location.pathname;
+      const fresh = Date.now() - Number(job.at) < 60 * 1000;
+      if (!sameTarget || !fresh) return null;
 
       try { sessionStorage.setItem(GPT_SESSION_KEY, JSON.stringify(job)); } catch {}
-
-      // 제타↔GPT 공용 저장소에는 필요한 순간까지만 보관한다.
       try { await sharedStorage.del(HANDOFF_KEY); } catch {}
       return job;
     }
 
     async function consumeHandoff() {
       if (handoffConsumed) return false;
-      const expectedId = handoffIdFromPage();
-
       const job = await loadHandoffJob();
-      if (!job) {
-        if (expectedId) clearHandoffMarkers();
-        return false;
-      }
+      if (!job) return false;
 
-      if (job.v !== 2 || typeof job.text !== 'string' || !job.text || job.text.length > 300000) {
+      if (!validJob(job)) {
         try { sessionStorage.removeItem(GPT_SESSION_KEY); } catch {}
-        clearHandoffMarkers();
-        return false;
-      }
-      if (!Number.isFinite(job.at) || Date.now() - job.at > MAX_AGE) {
-        try { sessionStorage.removeItem(GPT_SESSION_KEY); } catch {}
-        try { await sharedStorage.del(HANDOFF_KEY); } catch {}
         clearHandoffMarkers();
         return false;
       }
@@ -723,14 +742,16 @@
       confirmedPrompt = '';
     }
 
-    function buildGPTTarget(url, jobId) {
+    function buildGPTTarget(url, job) {
       try {
+        const transferPayload = encodeTransfer(job);
+        if (!transferPayload) return { url: '', transferPayload: '' };
         const target = new URL(url);
         target.searchParams.set('no_universal_links', '1');
-        target.hash = `${HANDOFF_HASH}=${encodeURIComponent(jobId)}`;
-        return target.toString();
+        target.hash = `${HANDOFF_HASH}=${encodeURIComponent(transferPayload)}`;
+        return { url: target.toString(), transferPayload };
       } catch {
-        return '';
+        return { url: '', transferPayload: '' };
       }
     }
 
@@ -744,16 +765,15 @@
       }
     }
 
-    function navigateGPTWindow(popup, url, jobId) {
-      const target = buildGPTTarget(url, jobId);
-      if (!popup || !target) return false;
-      try { popup.name = HANDOFF_NAME_PREFIX + jobId; } catch {}
+    function navigateGPTWindow(popup, url, job) {
+      const target = buildGPTTarget(url, job);
+      if (!popup || !target.url || !target.transferPayload) return false;
 
-      // AUTO_KILLER와 같은 방식: iOS의 미리 연 새 탭은 href로 직접 이동시킨다.
-      // Safari에서 about:blank WindowProxy에 replace()가 불안정한 경우를 피한다.
+      try { popup.name = HANDOFF_NAME_PREFIX + target.transferPayload; } catch {}
+
       if (IOS_DEVICE) {
         try {
-          popup.location.href = target;
+          popup.location.href = target.url;
           try { popup.focus(); } catch {}
           return true;
         } catch {
@@ -762,12 +782,12 @@
       }
 
       try {
-        popup.location.replace(target);
+        popup.location.replace(target.url);
         try { popup.focus(); } catch {}
         return true;
       } catch {
         try {
-          popup.location.href = target;
+          popup.location.href = target.url;
           try { popup.focus(); } catch {}
           return true;
         } catch {
@@ -777,11 +797,11 @@
     }
 
     function newDialog() {
-      document.getElementById('zgm55-overlay')?.remove();
+      document.getElementById('zgm56-overlay')?.remove();
       const overlay = create('div', document.body);
-      overlay.id = 'zgm55-overlay';
+      overlay.id = 'zgm56-overlay';
       const dialog = create('div', overlay);
-      dialog.id = 'zgm55-dialog';
+      dialog.id = 'zgm56-dialog';
       overlay.onclick = event => { if (event.target === overlay) overlay.remove(); };
 
       const head = create('div', dialog, null, 'display:flex;justify-content:space-between;align-items:center;gap:8px');
@@ -959,12 +979,12 @@
       }
 
       label(body, '옵션 1 · 사용 용도');
-      radio(body, '나레이션 덮어씌우기 용도', 'zgm55-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
-      radio(body, '유저 프로필에 넣는 용도', 'zgm55-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
+      radio(body, '나레이션 덮어씌우기 용도', 'zgm56-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
+      radio(body, '유저 프로필에 넣는 용도', 'zgm56-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
 
       label(body, '옵션 2 · 정리 범위');
-      radio(body, '이전 서사와 함께 정리', 'zgm55-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
-      radio(body, '복사한 내용만 정리', 'zgm55-scope', 'only', scope === 'only', value => { scope = value; });
+      radio(body, '이전 서사와 함께 정리', 'zgm56-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
+      radio(body, '복사한 내용만 정리', 'zgm56-scope', 'only', scope === 'only', value => { scope = value; });
 
       const confirmRow = buttons(body);
       const confirmButton = btn(confirmRow, '확인', () => {
@@ -1011,9 +1031,18 @@
           toast('GPT 채팅방을 먼저 선택해 줘.');
           return;
         }
+
         const payload = fullPromptText();
         if (!payload) {
           toast('대화를 가져오고 확인을 먼저 눌러 줘.');
+          return;
+        }
+
+        // AUTO_KILLER처럼 클릭 이벤트 안에서 새 탭을 제일 먼저 확보한다.
+        const popup = prepareGPTWindow();
+        if (!popup) {
+          try { await navigator.clipboard.writeText(payload); } catch {}
+          toast('새 탭이 차단됐어. Safari의 팝업 허용을 확인해 줘. 내용은 복사를 시도했어.');
           return;
         }
 
@@ -1021,74 +1050,27 @@
         try { targetPath = new URL(targetRoom.url).pathname; } catch {}
 
         const job = {
-          v: 2,
+          v: 3,
           id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
           text: payload,
           at: Date.now(),
-          targetPath
+          targetPath,
+          newTab: true
         };
 
-        // 클립보드는 자동입력 실패 시를 위한 백업이다.
-        try { await navigator.clipboard.writeText(payload); } catch {}
-
-        if (IOS_DEVICE) {
-          // iPhone/iPad의 Safari + Stay는 script로 연 새 탭에서
-          // userscript 재주입이 불안정할 수 있다.
-          // AUTO_KILLER의 iOS OneClick처럼 현재 탭을 ChatGPT로 이동시킨다.
-          // 같은 탭의 실제 navigation에서는 Stay가 ChatGPT 문서에 다시 주입된다.
-          const directTarget = buildGPTTarget(targetRoom.url, job.id);
-          if (!directTarget) {
-            toast('GPT 채팅방 주소를 만들지 못했어.');
-            return;
-          }
-
-          try {
-            await sharedStorage.set(HANDOFF_KEY, job);
-            const verify = await sharedStorage.get(HANDOFF_KEY, null);
-            if (!verify || verify.id !== job.id || verify.text !== job.text) {
-              throw new Error('공용 저장소 확인 실패');
-            }
-          } catch (error) {
-            toast('GPT 전달 저장소에 연결하지 못했어. 내용은 복사를 시도했어.');
-            return;
-          }
-
-          // 페이지를 떠나기 전에 현재 UI의 임시 데이터는 메모리에서 정리한다.
-          clearTransient();
-          toast('모바일에서는 같은 탭으로 GPT 채팅방에 연결할게…');
-
-          // 뒤로가기로 제타에 돌아올 수 있도록 replace가 아니라 assign을 사용한다.
-          setTimeout(() => {
-            try {
-              location.assign(directTarget);
-            } catch {
-              location.href = directTarget;
-            }
-          }, 80);
-          return;
-        }
-
-        // 데스크톱은 기존처럼 새 탭을 준비해 둔다.
-        const popup = prepareGPTWindow();
-        if (!popup) {
-          toast('새 탭이 차단됐어. 팝업 허용 설정을 확인해 줘. 내용은 복사를 시도했어.');
-          return;
-        }
-
+        let storageBackedUp = false;
         try {
           await sharedStorage.set(HANDOFF_KEY, job);
           const verify = await sharedStorage.get(HANDOFF_KEY, null);
-          if (!verify || verify.id !== job.id || verify.text !== job.text) {
-            throw new Error('공용 저장소 확인 실패');
-          }
-        } catch (error) {
-          try { popup.close(); } catch {}
-          toast('GPT 전달 저장소에 연결하지 못했어. 내용은 복사를 시도했어.');
-          return;
-        }
+          storageBackedUp = !!verify && verify.id === job.id && verify.text === job.text;
+        } catch {}
 
-        if (!navigateGPTWindow(popup, targetRoom.url, job.id)) {
-          try { await sharedStorage.del(HANDOFF_KEY); } catch {}
+        try { await navigator.clipboard.writeText(payload); } catch {}
+
+        if (!navigateGPTWindow(popup, targetRoom.url, job)) {
+          if (storageBackedUp) {
+            try { await sharedStorage.del(HANDOFF_KEY); } catch {}
+          }
           try { popup.close(); } catch {}
           toast('GPT 채팅방으로 이동하지 못했어. 복사된 내용을 직접 붙여넣어 줘.');
           return;
@@ -1096,7 +1078,9 @@
 
         clearTransient();
         show('main');
-        toast('GPT 채팅방을 새 탭으로 열었어. GPT가 받으면 전달용 임시 데이터도 바로 지워져.');
+        toast(storageBackedUp
+          ? 'GPT 새 탭으로 연결했어. hash + 임시 저장소로 이중 전달 중이야.'
+          : 'GPT 새 탭으로 연결했어. hash 전달로 자동입력을 시도할게.');
       }, true);
       go.disabled = !selected?.length || !confirmedPrompt;
 
@@ -1109,9 +1093,9 @@
     }
 
     function mount() {
-      if (document.getElementById('zgm55-trigger')) return;
+      if (document.getElementById('zgm56-trigger')) return;
       const button = create('button', document.body, '서사 정리');
-      button.id = 'zgm55-trigger';
+      button.id = 'zgm56-trigger';
       button.type = 'button';
       button.onclick = () => show('main');
     }
