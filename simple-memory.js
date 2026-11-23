@@ -1,10 +1,10 @@
 (() => {
   'use strict';
-  if (window.__ZGM_V56__) return;
-  window.__ZGM_V56__ = true;
+  if (window.__ZGM_V57__) return;
+  window.__ZGM_V57__ = true;
   window.__ZGM_REMOTE_CORE_LOADED__ = true;
   window.__ZGM_REMOTE_CORE_READY__ = true;
-  window.__ZGM_REMOTE_CORE_VERSION__ = '5.6';
+  window.__ZGM_REMOTE_CORE_VERSION__ = '5.7';
 
   const host = location.hostname;
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
@@ -12,7 +12,7 @@
   const gptSite = /(^|\.)chatgpt\.com$/.test(host) && window === window.top;
   if (!parentSite && !frameSite && !gptSite) return;
 
-  const CHANNEL = 'zgm.v56.bridge';
+  const CHANNEL = 'zgm.v57.bridge';
   const HANDOFF_HASH = 'zgmjob';
   const HANDOFF_NAME_PREFIX = '__ZGM_JOB_PAYLOAD_V3__:';
   const STORAGE_REQUEST_EVENT = '__ZGM_GM_REQUEST_V1__';
@@ -140,14 +140,14 @@
   };
 
   function toast(message) {
-    document.getElementById('zgm56-toast')?.remove();
+    document.getElementById('zgm57-toast')?.remove();
     const el = create(
       'div',
       document.body,
       message,
       'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#27272a;color:#fff;border-radius:12px;padding:12px 16px;max-width:90vw;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0005'
     );
-    el.id = 'zgm56-toast';
+    el.id = 'zgm57-toast';
     setTimeout(() => el.remove(), 4400);
   }
 
@@ -175,17 +175,17 @@
   }
 
   const css = `
-    #zgm56-trigger,#zgm56-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
-    #zgm56-overlay *{box-sizing:border-box}
-    #zgm56-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005}
-    #zgm56-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
-    #zgm56-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
-    #zgm56-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
-    #zgm56-overlay button.primary{background:#292929;color:white;border-color:#292929}
-    #zgm56-overlay button:disabled{opacity:.42;cursor:default}
-    #zgm56-overlay input,#zgm56-overlay select,#zgm56-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
-    #zgm56-overlay label{display:block;font-weight:700;margin:12px 0 6px}
-    #zgm56-overlay textarea{resize:vertical}
+    #zgm57-trigger,#zgm57-overlay{font:13px/1.5 system-ui,-apple-system,sans-serif;box-sizing:border-box}
+    #zgm57-overlay *{box-sizing:border-box}
+    #zgm57-trigger{position:fixed;right:14px;bottom:105px;z-index:2147483600;padding:10px 14px;border-radius:12px;border:1px solid #777;background:#292929;color:#fff;font-weight:700;box-shadow:0 4px 18px #0005;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab}
+    #zgm57-overlay{position:fixed;inset:0;z-index:2147483605;background:#0009;display:flex;align-items:center;justify-content:center;padding:12px}
+    #zgm57-dialog{width:min(550px,100%);max-height:90dvh;overflow:auto;background:#fafafa;color:#262626;border-radius:16px;padding:18px;box-shadow:0 12px 38px #0006}
+    #zgm57-overlay button{border-radius:10px;padding:9px 12px;border:1px solid #ccc;background:#fff;color:#222;font:600 13px system-ui;cursor:pointer}
+    #zgm57-overlay button.primary{background:#292929;color:white;border-color:#292929}
+    #zgm57-overlay button:disabled{opacity:.42;cursor:default}
+    #zgm57-overlay input,#zgm57-overlay select,#zgm57-overlay textarea{width:100%;min-width:0;padding:10px;border:1px solid #ccc;border-radius:9px;background:#fff;color:#222;font:13px/1.45 system-ui}
+    #zgm57-overlay label{display:block;font-weight:700;margin:12px 0 6px}
+    #zgm57-overlay textarea{resize:vertical}
   `;
   create('style', document.head || document.documentElement, css);
 
@@ -323,7 +323,7 @@
   // ChatGPT: 전달받은 프롬프트를 입력창에 채우기만 한다. 자동 전송은 하지 않는다.
   // 현재 로더 구조에서는 ChatGPT 측 Netlify JS 실행 여부에 따라 자동입력이 실패할 수 있다.
   // ---------------------------------------------------------------------------
-  if (gptSite) {
+  if (gptSite && window.__ZGM_LOADER_DIRECT_RECEIVER__ !== true) {
     try {
       const hasMarker = /(?:^#|[&#])zgmjob=/.test(String(location.hash || '')) ||
         !!sessionStorage.getItem(EARLY_JOB_SESSION_KEY) ||
@@ -624,6 +624,7 @@
     let confirmedPrompt = '';
     let waitingForFrame = false;
     const iframeOrigin = 'https://frame.pingpong.ai';
+    const TRIGGER_POSITION_KEY = BASE + 'trigger-position-v1';
 
     function locateFrame() {
       return [...document.querySelectorAll('iframe')].find(frame => {
@@ -797,11 +798,11 @@
     }
 
     function newDialog() {
-      document.getElementById('zgm56-overlay')?.remove();
+      document.getElementById('zgm57-overlay')?.remove();
       const overlay = create('div', document.body);
-      overlay.id = 'zgm56-overlay';
+      overlay.id = 'zgm57-overlay';
       const dialog = create('div', overlay);
-      dialog.id = 'zgm56-dialog';
+      dialog.id = 'zgm57-dialog';
       overlay.onclick = event => { if (event.target === overlay) overlay.remove(); };
 
       const head = create('div', dialog, null, 'display:flex;justify-content:space-between;align-items:center;gap:8px');
@@ -979,12 +980,12 @@
       }
 
       label(body, '옵션 1 · 사용 용도');
-      radio(body, '나레이션 덮어씌우기 용도', 'zgm56-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
-      radio(body, '유저 프로필에 넣는 용도', 'zgm56-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
+      radio(body, '나레이션 덮어씌우기 용도', 'zgm57-purpose', 'narrator', purpose === 'narrator', value => { purpose = value; });
+      radio(body, '유저 프로필에 넣는 용도', 'zgm57-purpose', 'profile', purpose === 'profile', value => { purpose = value; });
 
       label(body, '옵션 2 · 정리 범위');
-      radio(body, '이전 서사와 함께 정리', 'zgm56-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
-      radio(body, '복사한 내용만 정리', 'zgm56-scope', 'only', scope === 'only', value => { scope = value; });
+      radio(body, '이전 서사와 함께 정리', 'zgm57-scope', 'withHistory', scope === 'withHistory', value => { scope = value; });
+      radio(body, '복사한 내용만 정리', 'zgm57-scope', 'only', scope === 'only', value => { scope = value; });
 
       const confirmRow = buttons(body);
       const confirmButton = btn(confirmRow, '확인', () => {
@@ -1087,17 +1088,138 @@
       create(
         'p',
         body,
-        '대화는 가져오기 버튼을 누른 순간 화면에 렌더된 말풍선 DOM만 읽어. 제타 내부 API는 사용하지 않아. GPT 가져가기는 Stay 로더의 공용 임시 저장소를 거쳐 입력창까지만 자동으로 채우고 전송은 하지 않아. 전달 데이터는 GPT가 받는 즉시 공용 저장소에서 지워져.',
+        '대화는 가져오기 버튼을 누른 순간 화면에 렌더된 말풍선 DOM만 읽어. 제타 내부 API는 사용하지 않아. GPT 가져가기는 Stay 로더가 전달 데이터를 직접 받아 입력창까지만 자동으로 채우고 전송은 하지 않아. 전달 데이터는 GPT가 받는 즉시 공용 저장소에서 지워져.',
         'font-size:11px;color:#777;margin-top:12px'
       );
     }
 
+    function clampTriggerPosition(button, left, top) {
+      const rect = button.getBoundingClientRect();
+      const margin = 8;
+      const maxLeft = Math.max(margin, window.innerWidth - rect.width - margin);
+      const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
+      return {
+        left: Math.min(Math.max(margin, left), maxLeft),
+        top: Math.min(Math.max(margin, top), maxTop)
+      };
+    }
+
+    function saveTriggerPosition(button) {
+      try {
+        const rect = button.getBoundingClientRect();
+        localStorage.setItem(TRIGGER_POSITION_KEY, JSON.stringify({
+          left: Math.round(rect.left),
+          top: Math.round(rect.top)
+        }));
+      } catch {}
+    }
+
+    function restoreTriggerPosition(button) {
+      try {
+        const saved = JSON.parse(localStorage.getItem(TRIGGER_POSITION_KEY) || 'null');
+        if (!saved || !Number.isFinite(saved.left) || !Number.isFinite(saved.top)) return;
+        const pos = clampTriggerPosition(button, saved.left, saved.top);
+        button.style.left = `${pos.left}px`;
+        button.style.top = `${pos.top}px`;
+        button.style.right = 'auto';
+        button.style.bottom = 'auto';
+      } catch {}
+    }
+
+    function makeTriggerDraggable(button) {
+      let dragging = false;
+      let moved = false;
+      let pointerId = null;
+      let startX = 0;
+      let startY = 0;
+      let startLeft = 0;
+      let startTop = 0;
+      let suppressClick = false;
+
+      button.addEventListener('pointerdown', event => {
+        if (event.button != null && event.button !== 0) return;
+
+        const rect = button.getBoundingClientRect();
+        pointerId = event.pointerId;
+        startX = event.clientX;
+        startY = event.clientY;
+        startLeft = rect.left;
+        startTop = rect.top;
+        moved = false;
+        dragging = true;
+
+        button.style.left = `${rect.left}px`;
+        button.style.top = `${rect.top}px`;
+        button.style.right = 'auto';
+        button.style.bottom = 'auto';
+        button.style.cursor = 'grabbing';
+
+        try { button.setPointerCapture(pointerId); } catch {}
+      });
+
+      button.addEventListener('pointermove', event => {
+        if (!dragging || event.pointerId !== pointerId) return;
+
+        const dx = event.clientX - startX;
+        const dy = event.clientY - startY;
+        if (!moved && Math.hypot(dx, dy) < 5) return;
+
+        moved = true;
+        event.preventDefault();
+
+        const pos = clampTriggerPosition(button, startLeft + dx, startTop + dy);
+        button.style.left = `${pos.left}px`;
+        button.style.top = `${pos.top}px`;
+      }, { passive: false });
+
+      const finish = event => {
+        if (!dragging || (event.pointerId != null && event.pointerId !== pointerId)) return;
+
+        dragging = false;
+        button.style.cursor = 'grab';
+        try { button.releasePointerCapture(pointerId); } catch {}
+        pointerId = null;
+
+        if (moved) {
+          suppressClick = true;
+          saveTriggerPosition(button);
+          setTimeout(() => { suppressClick = false; }, 0);
+        }
+      };
+
+      button.addEventListener('pointerup', finish);
+      button.addEventListener('pointercancel', finish);
+
+      button.addEventListener('click', event => {
+        if (suppressClick || moved) {
+          event.preventDefault();
+          event.stopPropagation();
+          moved = false;
+          return;
+        }
+        show('main');
+      });
+
+      window.addEventListener('resize', () => {
+        if (!button.isConnected) return;
+        const rect = button.getBoundingClientRect();
+        const pos = clampTriggerPosition(button, rect.left, rect.top);
+        button.style.left = `${pos.left}px`;
+        button.style.top = `${pos.top}px`;
+        button.style.right = 'auto';
+        button.style.bottom = 'auto';
+        saveTriggerPosition(button);
+      });
+    }
+
     function mount() {
-      if (document.getElementById('zgm56-trigger')) return;
+      if (document.getElementById('zgm57-trigger')) return;
       const button = create('button', document.body, '서사 정리');
-      button.id = 'zgm56-trigger';
+      button.id = 'zgm57-trigger';
       button.type = 'button';
-      button.onclick = () => show('main');
+
+      restoreTriggerPosition(button);
+      makeTriggerDraggable(button);
     }
 
     mount();
