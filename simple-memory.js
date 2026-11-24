@@ -1,8 +1,8 @@
 (() => {
   'use strict';
 
-  if (window.__ZGM_SIMPLE_V1_5__) return;
-  window.__ZGM_SIMPLE_V1_5__ = true;
+  if (window.__ZGM_SIMPLE_V1_6__) return;
+  window.__ZGM_SIMPLE_V1_6__ = true;
 
   const host = String(location.hostname || '').toLowerCase();
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
@@ -10,12 +10,12 @@
 
   if (!parentSite && !frameSite) return;
 
-  const CHANNEL = 'zgm.simple.v1.5';
+  const CHANNEL = 'zgm.simple.v1.6';
   const BASE = 'zgm-simple-v1-';
   const ROOM_KEY = BASE + 'rooms';
   const FOLDER_KEY = BASE + 'folders';
   const TRIGGER_POSITION_KEY = BASE + 'trigger-position';
-  const MAX_TURNS = 20;
+  const MAX_TURNS = 50;
   const MAX_MESSAGES = MAX_TURNS * 2;
 
   const clean = value => String(value ?? '').replace(/\u200b/g, '').trim();
@@ -555,7 +555,7 @@
 
       let noProgressCount = 0;
       let steps = 0;
-      const maxSteps = 12;
+      const maxSteps = Math.max(12, Math.min(36, Math.ceil(requested * 0.7)));
 
       send('collect-progress', {
         requestedTurns: requested,
