@@ -1,8 +1,8 @@
 (() => {
   'use strict';
 
-  if (window.__ZGM_SIMPLE_V1_6__) return;
-  window.__ZGM_SIMPLE_V1_6__ = true;
+  if (window.__ZGM_SIMPLE_V1_7__) return;
+  window.__ZGM_SIMPLE_V1_7__ = true;
 
   const host = String(location.hostname || '').toLowerCase();
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
@@ -10,7 +10,7 @@
 
   if (!parentSite && !frameSite) return;
 
-  const CHANNEL = 'zgm.simple.v1.6';
+  const CHANNEL = 'zgm.simple.v1.7';
   const BASE = 'zgm-simple-v1-';
   const ROOM_KEY = BASE + 'rooms';
   const FOLDER_KEY = BASE + 'folders';
@@ -483,49 +483,163 @@
     }
 
     function findScrollContainer(root) {
+      if (!root) return document.scrollingElement || null;
+
+      const chain = [];
       let node = root;
 
-      while (node && node !== document.body && node !== document.documentElement) {
-        try {
-          const style = getComputedStyle(node);
-          const overflowY = style.overflowY;
-          const canScroll = /auto|scroll|overlay/i.test(overflowY) &&
-            node.scrollHeight > node.clientHeight + 8;
-
-          if (canScroll) return node;
-        } catch {}
-
+      while (node && node instanceof Element) {
+        chain.push(node);
+        if (node === document.body || node === document.documentElement) break;
         node = node.parentElement;
       }
 
-      const candidates = [...document.querySelectorAll('main,section,div')]
+      const score = el => {
+        if (!el) return -Infinity;
+
+        let value = 0;
+
+        try {
+          const style = getComputedStyle(el);
+          const overflowY = String(style.overflowY || '');
+
+          if (/auto|scroll|overlay/i.test(overflowY)) value += 120;
+          if (el.matches?.('[data-radix-scroll-area-viewport]')) value += 180;
+          if (el.matches?.('[data-scroll-container],[data-virtuoso-scroller]')) value += 180;
+          if (/overflow-y-(?:auto|scroll)/.test(String(el.className || ''))) value += 100;
+
+          const range = el.scrollHeight - el.clientHeight;
+          if (range > 8) value += 80;
+          if (range > 500) value += 30;
+          if (el.clientHeight > 250) value += 20;
+        } catch {}
+
+        // log에 가까운 조상일수록 우선한다.
+        const index = chain.indexOf(el);
+        if (index >= 0) value += Math.max(0, 80 - index * 8);
+
+        return value;
+      };
+
+      const ancestorCandidates = chain
         .filter(el => {
           try {
-            const style = getComputedStyle(el);
-            return /auto|scroll|overlay/i.test(style.overflowY) &&
+            return el.scrollHeight > el.clientHeight + 8;
+          } catch {
+            return false;
+          }
+        })
+        .sort((a, b) => score(b) - score(a));
+
+      if (ancestorCandidates[0]) return ancestorCandidates[0];
+
+      const preferred = [
+        ...document.querySelectorAll(
+          '[data-radix-scroll-area-viewport],[data-scroll-container],[data-virtuoso-scroller],[class*="overflow-y-auto"],[class*="overflow-y-scroll"]'
+        )
+      ]
+        .filter(el => {
+          try {
+            return el.contains(root) &&
+              el.scrollHeight > el.clientHeight + 8 &&
+              el.clientHeight > 160;
+          } catch {
+            return false;
+          }
+        })
+        .sort((a, b) => score(b) - score(a));
+
+      if (preferred[0]) return preferred[0];
+
+      const fallback = [...document.querySelectorAll('main,section,div')]
+        .filter(el => {
+          try {
+            return el.contains(root) &&
               el.scrollHeight > el.clientHeight + 80 &&
               el.clientHeight > 180;
           } catch {
             return false;
           }
         })
-        .sort((a, b) => b.clientHeight - a.clientHeight);
+        .sort((a, b) => score(b) - score(a));
 
-      return candidates[0] || document.scrollingElement || null;
+      return fallback[0] || document.scrollingElement || null;
     }
 
-    async function waitForChangedSnapshot(previousSignature, timeout = 1100) {
+    function snapshotSignature(entries) {
+      return entries
+        .map(item => entryKey(simpleEntry(item)))
+        .join('\u241e');
+    }
+
+    async function waitForChangedSnapshot(previousSignature, timeout = 2600) {
       const deadline = Date.now() + timeout;
       let latest = getEntries();
 
       while (Date.now() < deadline) {
-        const signature = latest.map(item => entryKey(simpleEntry(item))).join('\u241e');
-        if (signature && signature !== previousSignature) return latest;
-        await wait(90);
+        const signature = snapshotSignature(latest);
+
+        if (signature && signature !== previousSignature) {
+          // React가 한 번 더 렌더링할 수 있어서 아주 잠깐 안정화 시간을 준다.
+          await wait(120);
+          return getEntries();
+        }
+
+        await wait(120);
         latest = getEntries();
       }
 
       return latest;
+    }
+
+    function scrollTowardOlder(scroller, entries) {
+      if (!scroller) return false;
+
+      const first = entries[0];
+      const anchor = first?.row || first?.bubble || null;
+
+      // 가상 스크롤러 중 일부는 scrollTop 직접 변경보다
+      // 현재 가장 오래된 항목을 viewport 위쪽으로 보내는 방식에 더 잘 반응한다.
+      if (anchor?.scrollIntoView) {
+        try {
+          anchor.scrollIntoView({
+            block: 'start',
+            inline: 'nearest',
+            behavior: 'auto'
+          });
+        } catch {}
+      }
+
+      const beforeTop = Number(scroller.scrollTop || 0);
+      const amount = Math.max(
+        360,
+        Math.floor((scroller.clientHeight || window.innerHeight || 600) * 0.9)
+      );
+
+      try {
+        if (typeof scroller.scrollBy === 'function') {
+          scroller.scrollBy({
+            top: -amount,
+            left: 0,
+            behavior: 'auto'
+          });
+        } else {
+          scroller.scrollTop = Math.max(0, beforeTop - amount);
+        }
+      } catch {
+        try {
+          scroller.scrollTop = Math.max(0, beforeTop - amount);
+        } catch {}
+      }
+
+      // 이미 위쪽에 가까웠다면 아예 0도 한 번 찍어 과거 로딩 sentinel을 자극한다.
+      try {
+        if (Number(scroller.scrollTop || 0) < Math.max(120, amount * 0.25)) {
+          scroller.scrollTop = 0;
+        }
+      } catch {}
+
+      return true;
     }
 
     async function collectRecent(turns) {
@@ -547,70 +661,126 @@
 
       let collected = firstEntries.map(simpleEntry);
       const root = log();
-      const scroller = root ? findScrollContainer(root) : null;
 
-      const startDistanceFromBottom = scroller
-        ? Math.max(0, scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight)
+      // 원래 위치 복구용. 가상 스크롤에서 높이가 바뀌어도 하단 기준 거리를 최대한 유지한다.
+      let initialScroller = root ? findScrollContainer(root) : null;
+      const startDistanceFromBottom = initialScroller
+        ? Math.max(
+            0,
+            initialScroller.scrollHeight -
+              Number(initialScroller.scrollTop || 0) -
+              initialScroller.clientHeight
+          )
         : 0;
 
       let noProgressCount = 0;
       let steps = 0;
-      const maxSteps = Math.max(12, Math.min(36, Math.ceil(requested * 0.7)));
+
+      // 50턴에서도 충분히 위로 올라갈 수 있게 넉넉히 허용하되 무한 루프는 막는다.
+      const maxSteps = Math.max(
+        18,
+        Math.min(70, Math.ceil(requested * 1.25))
+      );
 
       send('collect-progress', {
         requestedTurns: requested,
         loadedTurns: Math.min(requested, Math.ceil(collected.length / 2))
       });
 
-      while (collected.length < wantedMessages && scroller && steps < maxSteps) {
-        const beforeLength = collected.length;
+      while (collected.length < wantedMessages && steps < maxSteps) {
+        const liveRoot = log();
+        const scroller = liveRoot ? findScrollContainer(liveRoot) : null;
+
+        if (!scroller) break;
+
         const beforeEntries = getEntries();
-        const beforeSignature = beforeEntries
-          .map(item => entryKey(simpleEntry(item)))
-          .join('\u241e');
-
+        const beforeSignature = snapshotSignature(beforeEntries);
+        const beforeLength = collected.length;
         const beforeTop = Number(scroller.scrollTop || 0);
-        const amount = Math.max(220, Math.floor(scroller.clientHeight * 0.68));
 
-        try {
-          scroller.scrollTo({
-            top: Math.max(0, beforeTop - amount),
-            behavior: 'auto'
-          });
-        } catch {
-          scroller.scrollTop = Math.max(0, beforeTop - amount);
-        }
+        scrollTowardOlder(scroller, beforeEntries);
 
-        await wait(180);
-        const snapshot = await waitForChangedSnapshot(beforeSignature, 1100);
+        // 스크롤 반영 + 과거 메시지 fetch/render 시간을 기다린다.
+        await wait(260);
+        const snapshot = await waitForChangedSnapshot(beforeSignature, 2600);
+
         collected = mergeOlder(collected, snapshot);
         steps += 1;
 
-        const loadedTurns = Math.min(requested, Math.ceil(collected.length / 2));
+        const loadedTurns = Math.min(
+          requested,
+          Math.ceil(collected.length / 2)
+        );
+
         send('collect-progress', {
           requestedTurns: requested,
           loadedTurns
         });
 
-        const afterTop = Number(scroller.scrollTop || 0);
         const gained = collected.length - beforeLength;
 
-        if (gained <= 0) noProgressCount += 1;
-        else noProgressCount = 0;
+        // React가 scroller 자체를 교체했을 수 있으므로 여기서 다시 찾는다.
+        const currentRoot = log();
+        const currentScroller = currentRoot
+          ? findScrollContainer(currentRoot)
+          : null;
 
-        const reachedTop = afterTop <= 1 || Math.abs(afterTop - beforeTop) < 1;
-        if ((reachedTop && noProgressCount >= 1) || noProgressCount >= 2) break;
+        const afterTop = currentScroller
+          ? Number(currentScroller.scrollTop || 0)
+          : beforeTop;
+
+        if (gained > 0) {
+          noProgressCount = 0;
+        } else {
+          noProgressCount += 1;
+        }
+
+        // 위쪽에 닿았더라도 과거 대화가 늦게 붙는 경우가 있어
+        // 한두 번으로 끝내지 않고 최대 4회까지 재시도한다.
+        const nearTop =
+          afterTop <= 2 ||
+          Math.abs(afterTop - beforeTop) < 1;
+
+        if (nearTop && noProgressCount >= 4) break;
+        if (!nearTop && noProgressCount >= 5) break;
       }
 
+      // 마지막 렌더 상태도 한 번 더 합친다.
+      collected = mergeOlder(collected, getEntries());
+
       // 자동으로 올렸던 위치를 가능한 한 원래 보던 위치로 되돌린다.
-      if (scroller && steps > 0) {
-        try {
-          const targetTop = Math.max(
-            0,
-            scroller.scrollHeight - scroller.clientHeight - startDistanceFromBottom
-          );
-          scroller.scrollTo({ top: targetTop, behavior: 'auto' });
-        } catch {}
+      if (steps > 0) {
+        await wait(120);
+
+        const restoreRoot = log();
+        const restoreScroller = restoreRoot
+          ? findScrollContainer(restoreRoot)
+          : null;
+
+        if (restoreScroller) {
+          try {
+            const targetTop = Math.max(
+              0,
+              restoreScroller.scrollHeight -
+                restoreScroller.clientHeight -
+                startDistanceFromBottom
+            );
+
+            restoreScroller.scrollTo({
+              top: targetTop,
+              behavior: 'auto'
+            });
+          } catch {
+            try {
+              restoreScroller.scrollTop = Math.max(
+                0,
+                restoreScroller.scrollHeight -
+                  restoreScroller.clientHeight -
+                  startDistanceFromBottom
+              );
+            } catch {}
+          }
+        }
       }
 
       const slice = collected.slice(-wantedMessages);
@@ -619,6 +789,7 @@
         requestedTurns: requested,
         availableTurns: Math.ceil(collected.length / 2),
         autoScrolled: steps > 0,
+        scrollSteps: steps,
         messages: slice
       });
     }
