@@ -1,8 +1,8 @@
 (() => {
   'use strict';
 
-  if (window.__ZGM_SIMPLE_V1_12__) return;
-  window.__ZGM_SIMPLE_V1_12__ = true;
+  if (window.__ZGM_SIMPLE_V1_13__) return;
+  window.__ZGM_SIMPLE_V1_13__ = true;
 
   const host = String(location.hostname || '').toLowerCase();
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
@@ -10,7 +10,7 @@
 
   if (!parentSite && !frameSite) return;
 
-  const CHANNEL = 'zgm.simple.v1.12';
+  const CHANNEL = 'zgm.simple.v1.13';
   const BASE = 'zgm-simple-v1-';
   const ROOM_KEY = BASE + 'rooms';
   const FOLDER_KEY = BASE + 'folders';
@@ -1128,7 +1128,7 @@ ${dialogueText()}
         'display:flex;justify-content:space-between;align-items:center;gap:8px'
       );
 
-      create('strong', head, 'Zeta GPT Memory', 'font-size:17px');
+      create('strong', head, 'Simple Memory', 'font-size:17px');
 
       const close = create('button', head, '✕');
       close.onclick = () => overlay.remove();
