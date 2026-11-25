@@ -1,8 +1,8 @@
 (() => {
   'use strict';
 
-  if (window.__ZGM_SIMPLE_V1_8__) return;
-  window.__ZGM_SIMPLE_V1_8__ = true;
+  if (window.__ZGM_SIMPLE_V1_9__) return;
+  window.__ZGM_SIMPLE_V1_9__ = true;
 
   const host = String(location.hostname || '').toLowerCase();
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
@@ -10,7 +10,7 @@
 
   if (!parentSite && !frameSite) return;
 
-  const CHANNEL = 'zgm.simple.v1.8';
+  const CHANNEL = 'zgm.simple.v1.9';
   const BASE = 'zgm-simple-v1-';
   const ROOM_KEY = BASE + 'rooms';
   const FOLDER_KEY = BASE + 'folders';
@@ -598,8 +598,7 @@
       const first = entries[0];
       const anchor = first?.row || first?.bubble || null;
 
-      // 가상 스크롤러 중 일부는 scrollTop 직접 변경보다
-      // 현재 가장 오래된 항목을 viewport 위쪽으로 보내는 방식에 더 잘 반응한다.
+      // 현재 DOM에서 가장 오래된 말풍선을 먼저 화면 위쪽으로 붙인다.
       if (anchor?.scrollIntoView) {
         try {
           anchor.scrollIntoView({
@@ -616,6 +615,9 @@
         Math.floor((scroller.clientHeight || window.innerHeight || 600) * 0.9)
       );
 
+      // 중요:
+      // iOS Safari + column-reverse 계열 스크롤러는 과거 방향으로 갈수록
+      // scrollTop이 음수가 될 수 있다. 따라서 0으로 강제 보정하면 안 된다.
       try {
         if (typeof scroller.scrollBy === 'function') {
           scroller.scrollBy({
@@ -624,20 +626,13 @@
             behavior: 'auto'
           });
         } else {
-          scroller.scrollTop = Math.max(0, beforeTop - amount);
+          scroller.scrollTop = beforeTop - amount;
         }
       } catch {
         try {
-          scroller.scrollTop = Math.max(0, beforeTop - amount);
+          scroller.scrollTop = beforeTop - amount;
         } catch {}
       }
-
-      // 이미 위쪽에 가까웠다면 아예 0도 한 번 찍어 과거 로딩 sentinel을 자극한다.
-      try {
-        if (Number(scroller.scrollTop || 0) < Math.max(120, amount * 0.25)) {
-          scroller.scrollTop = 0;
-        }
-      } catch {}
 
       return true;
     }
@@ -702,6 +697,7 @@
       let collected = firstEntries.map(simpleEntry);
 
       let noProgressCount = 0;
+      let stuckAtEdgeCount = 0;
       let steps = 0;
 
       // 50턴에서도 충분히 위로 올라갈 수 있게 넉넉히 허용하되 무한 루프는 막는다.
@@ -730,7 +726,7 @@
 
         // 스크롤 반영 + 과거 메시지 fetch/render 시간을 기다린다.
         await wait(260);
-        const snapshot = await waitForChangedSnapshot(beforeSignature, 2600);
+        const snapshot = await waitForChangedSnapshot(beforeSignature, 3200);
 
         collected = mergeOlder(collected, snapshot);
         steps += 1;
@@ -757,20 +753,28 @@
           ? Number(currentScroller.scrollTop || 0)
           : beforeTop;
 
+        const moved = Math.abs(afterTop - beforeTop) >= 1;
+
         if (gained > 0) {
           noProgressCount = 0;
+          stuckAtEdgeCount = 0;
         } else {
           noProgressCount += 1;
+
+          // 정상 스크롤/역방향 스크롤 모두 "값이 거의 안 변함"을
+          // 실제 끝에 닿은 신호로 사용한다. scrollTop의 부호는 보지 않는다.
+          if (!moved) {
+            stuckAtEdgeCount += 1;
+          } else {
+            stuckAtEdgeCount = 0;
+          }
         }
 
-        // 위쪽에 닿았더라도 과거 대화가 늦게 붙는 경우가 있어
-        // 한두 번으로 끝내지 않고 최대 4회까지 재시도한다.
-        const nearTop =
-          afterTop <= 2 ||
-          Math.abs(afterTop - beforeTop) < 1;
-
-        if (nearTop && noProgressCount >= 4) break;
-        if (!nearTop && noProgressCount >= 5) break;
+        // 진짜 위 끝에 닿았는데 새 말풍선도 안 생기는 상태가
+        // 3번 연속일 때만 "더 과거 대화 없음"으로 판단한다.
+        // 이동은 되는데 로딩이 늦는 경우도 있으므로 전체 무진행은 더 넉넉히 본다.
+        if (stuckAtEdgeCount >= 3) break;
+        if (noProgressCount >= 8) break;
       }
 
       // 마지막 렌더 상태도 한 번 더 합친다.
