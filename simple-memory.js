@@ -1,8 +1,8 @@
 (() => {
   'use strict';
 
-  if (window.__ZGM_SIMPLE_V1_7__) return;
-  window.__ZGM_SIMPLE_V1_7__ = true;
+  if (window.__ZGM_SIMPLE_V1_8__) return;
+  window.__ZGM_SIMPLE_V1_8__ = true;
 
   const host = String(location.hostname || '').toLowerCase();
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
@@ -10,7 +10,7 @@
 
   if (!parentSite && !frameSite) return;
 
-  const CHANNEL = 'zgm.simple.v1.7';
+  const CHANNEL = 'zgm.simple.v1.8';
   const BASE = 'zgm-simple-v1-';
   const ROOM_KEY = BASE + 'rooms';
   const FOLDER_KEY = BASE + 'folders';
@@ -642,6 +642,46 @@
       return true;
     }
 
+    async function scrollToLatest() {
+      // 제타의 가상 스크롤은 맨 아래로 내리는 순간 DOM을 다시 구성할 수 있어서
+      // 한 번만 scrollTop=scrollHeight를 주지 않고 최신 말풍선 기준 + scrollHeight 기준을 반복한다.
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const liveRoot = log();
+        const scroller = liveRoot ? findScrollContainer(liveRoot) : null;
+        const entries = getEntries();
+        const last = entries[entries.length - 1];
+        const anchor = last?.row || last?.bubble || null;
+
+        if (anchor?.scrollIntoView) {
+          try {
+            anchor.scrollIntoView({
+              block: 'end',
+              inline: 'nearest',
+              behavior: 'auto'
+            });
+          } catch {}
+        }
+
+        if (scroller) {
+          try {
+            if (typeof scroller.scrollTo === 'function') {
+              scroller.scrollTo({
+                top: scroller.scrollHeight,
+                left: 0,
+                behavior: 'auto'
+              });
+            } else {
+              scroller.scrollTop = scroller.scrollHeight;
+            }
+          } catch {
+            try { scroller.scrollTop = scroller.scrollHeight; } catch {}
+          }
+        }
+
+        await wait(attempt === 0 ? 180 : 120);
+      }
+    }
+
     async function collectRecent(turns) {
       const requested = Math.max(
         1,
@@ -660,18 +700,6 @@
       }
 
       let collected = firstEntries.map(simpleEntry);
-      const root = log();
-
-      // 원래 위치 복구용. 가상 스크롤에서 높이가 바뀌어도 하단 기준 거리를 최대한 유지한다.
-      let initialScroller = root ? findScrollContainer(root) : null;
-      const startDistanceFromBottom = initialScroller
-        ? Math.max(
-            0,
-            initialScroller.scrollHeight -
-              Number(initialScroller.scrollTop || 0) -
-              initialScroller.clientHeight
-          )
-        : 0;
 
       let noProgressCount = 0;
       let steps = 0;
@@ -748,43 +776,9 @@
       // 마지막 렌더 상태도 한 번 더 합친다.
       collected = mergeOlder(collected, getEntries());
 
-      // 자동으로 올렸던 위치를 가능한 한 원래 보던 위치로 되돌린다.
-      if (steps > 0) {
-        await wait(120);
-
-        const restoreRoot = log();
-        const restoreScroller = restoreRoot
-          ? findScrollContainer(restoreRoot)
-          : null;
-
-        if (restoreScroller) {
-          try {
-            const targetTop = Math.max(
-              0,
-              restoreScroller.scrollHeight -
-                restoreScroller.clientHeight -
-                startDistanceFromBottom
-            );
-
-            restoreScroller.scrollTo({
-              top: targetTop,
-              behavior: 'auto'
-            });
-          } catch {
-            try {
-              restoreScroller.scrollTop = Math.max(
-                0,
-                restoreScroller.scrollHeight -
-                  restoreScroller.clientHeight -
-                  startDistanceFromBottom
-              );
-            } catch {}
-          }
-        }
-      }
-
       const slice = collected.slice(-wantedMessages);
 
+      // 1) 먼저 부모에 결과를 보내 미리보기를 띄운다.
       send('collected', {
         requestedTurns: requested,
         availableTurns: Math.ceil(collected.length / 2),
@@ -792,6 +786,11 @@
         scrollSteps: steps,
         messages: slice
       });
+
+      // 2) 미리보기 렌더가 먼저 일어날 시간을 아주 조금 준 뒤,
+      //    채팅 화면은 항상 '맨 아래 최신 메시지'로 되돌린다.
+      await wait(220);
+      await scrollToLatest();
     }
 
     window.addEventListener('message', event => {
@@ -850,7 +849,7 @@
           if (!waitingForFrame) return;
           waitingForFrame = false;
           toast('iframe 응답이 없어. Stay에서 frame.pingpong.ai가 허용되어 있는지 확인해 줘.');
-        }, 18000);
+        }, 90000);
       }
 
       frame.contentWindow.postMessage(
