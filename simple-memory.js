@@ -1,8 +1,8 @@
 (() => {
   'use strict';
 
-  if (window.__ZGM_SIMPLE_V1_11__) return;
-  window.__ZGM_SIMPLE_V1_11__ = true;
+  if (window.__ZGM_SIMPLE_V1_12__) return;
+  window.__ZGM_SIMPLE_V1_12__ = true;
 
   const host = String(location.hostname || '').toLowerCase();
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
@@ -10,7 +10,7 @@
 
   if (!parentSite && !frameSite) return;
 
-  const CHANNEL = 'zgm.simple.v1.11';
+  const CHANNEL = 'zgm.simple.v1.12';
   const BASE = 'zgm-simple-v1-';
   const ROOM_KEY = BASE + 'rooms';
   const FOLDER_KEY = BASE + 'folders';
@@ -69,6 +69,19 @@
       return url.origin + url.pathname.replace(/\/$/, '');
     } catch {
       return '';
+    }
+  }
+
+  function browserOnlyGPTURL(value) {
+    const safe = validURL(value);
+    if (!safe) return '';
+
+    try {
+      const url = new URL(safe);
+      url.searchParams.set('no_universal_links', '1');
+      return url.toString();
+    } catch {
+      return safe;
     }
   }
 
@@ -1755,16 +1768,32 @@ ${dialogueText()}
             return;
           }
 
-          const popup = window.open(targetRoom.url, '_blank');
+          const targetURL = browserOnlyGPTURL(targetRoom.url);
+
+          if (!targetURL) {
+            toast('저장된 GPT 채팅방 주소를 확인해 줘.');
+            return;
+          }
+
+          // iPhone Safari에서 chatgpt.com 링크가 ChatGPT 앱으로 넘어가는 것을
+          // 피하기 위해 클릭 순간 빈 탭을 먼저 만들고 브라우저용 URL로 이동한다.
+          const popup = window.open('about:blank', '_blank');
 
           if (!popup) {
-            toast('새 탭이 차단됐어. Safari의 팝업 허용 설정을 확인해 줘.');
+            toast('새 탭을 열 수 없었어. 브라우저의 새 탭 허용 설정을 확인해 줘.');
             return;
           }
 
           try {
+            popup.location.href = targetURL;
             popup.focus();
-          } catch {}
+          } catch {
+            try {
+              popup.location.replace(targetURL);
+            } catch {
+              toast('GPT 채팅방 이동에 실패했어. 다시 한 번 눌러 줘.');
+            }
+          }
         },
         false
       );
