@@ -1,8 +1,8 @@
 (() => {
   'use strict';
 
-  if (window.__ZGM_SIMPLE_V1_9__) return;
-  window.__ZGM_SIMPLE_V1_9__ = true;
+  if (window.__ZGM_SIMPLE_V1_11__) return;
+  window.__ZGM_SIMPLE_V1_11__ = true;
 
   const host = String(location.hostname || '').toLowerCase();
   const parentSite = /(^|\.)zeta-ai\.io$/.test(host) && window === window.top;
@@ -10,7 +10,7 @@
 
   if (!parentSite && !frameSite) return;
 
-  const CHANNEL = 'zgm.simple.v1.9';
+  const CHANNEL = 'zgm.simple.v1.11';
   const BASE = 'zgm-simple-v1-';
   const ROOM_KEY = BASE + 'rooms';
   const FOLDER_KEY = BASE + 'folders';
@@ -114,8 +114,8 @@
       right: 14px;
       bottom: 105px;
       z-index: 2147483600;
-      width: 56px;
-      height: 56px;
+      width: 44px;
+      height: 44px;
       padding: 0;
       border-radius: 999px;
       border: 1px solid rgba(255,255,255,.18);
@@ -141,8 +141,8 @@
     }
 
     #zgm-simple-trigger svg {
-      width: 24px;
-      height: 24px;
+      width: 19px;
+      height: 19px;
       display: block;
       pointer-events: none;
     }
@@ -572,7 +572,7 @@
         .join('\u241e');
     }
 
-    async function waitForChangedSnapshot(previousSignature, timeout = 2600) {
+    async function waitForChangedSnapshot(previousSignature, timeout = 3200) {
       const deadline = Date.now() + timeout;
       let latest = getEntries();
 
@@ -580,12 +580,14 @@
         const signature = snapshotSignature(latest);
 
         if (signature && signature !== previousSignature) {
-          // React가 한 번 더 렌더링할 수 있어서 아주 잠깐 안정화 시간을 준다.
+          // 변화가 확인된 뒤에만 한 번 더 안정화된 DOM을 읽는다.
           await wait(120);
           return getEntries();
         }
 
-        await wait(120);
+        // 전체 말풍선 DOM 재스캔을 너무 자주 하지 않도록
+        // 250ms 간격으로 제한한다.
+        await wait(250);
         latest = getEntries();
       }
 
