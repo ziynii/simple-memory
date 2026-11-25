@@ -1924,7 +1924,9 @@ ${dialogueText()}
         if (
           !dragging ||
           (event.pointerId != null && event.pointerId !== pointerId)
-        ) return;
+        ) return false;
+
+        const didMove = moved;
 
         dragging = false;
         button.style.cursor = 'grab';
@@ -1935,18 +1937,42 @@ ${dialogueText()}
 
         pointerId = null;
 
-        if (moved) {
+        if (didMove) {
           blockClick = true;
           saveTriggerPosition(button);
 
           setTimeout(() => {
             blockClick = false;
+            moved = false;
           }, 0);
+
+          return false;
         }
+
+        moved = false;
+        return true;
       };
 
-      button.addEventListener('pointerup', finish);
-      button.addEventListener('pointercancel', finish);
+      button.addEventListener('pointerup', event => {
+        // Clean Cozy 도구폴더는 드래그형 플로팅 버튼을
+        // pointerdown → pointerup 방식으로 실행한다.
+        // 실제 드래그가 아니었던 pointer tap이면 여기서도 모달을 열어
+        // 원래 버튼 클릭과 도구폴더 실행을 둘 다 지원한다.
+        if (!finish(event)) return;
+
+        blockClick = true;
+        show('main');
+
+        // 실제 손가락/마우스 탭은 pointerup 뒤 click도 발생하므로
+        // 바로 뒤따르는 click 한 번만 막아 모달 중복 생성을 방지한다.
+        setTimeout(() => {
+          blockClick = false;
+        }, 0);
+      });
+
+      button.addEventListener('pointercancel', event => {
+        finish(event);
+      });
 
       button.addEventListener('click', event => {
         if (blockClick || moved) {
@@ -1956,6 +1982,7 @@ ${dialogueText()}
           return;
         }
 
+        // 키보드 activation / HTMLElement.click()도 기존처럼 지원한다.
         show('main');
       });
 
